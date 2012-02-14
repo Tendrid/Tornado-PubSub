@@ -5,9 +5,9 @@ import tornado.web
 
 class PubSub(object):
     channels = {}
-    masterList = {}
+    master_list = {}
     db = None
-    chanSet = {}
+    chan_set = {}
     _gate = {}
     _collections = {}
     users = {}
@@ -39,12 +39,12 @@ class PubSub(object):
         def func(cls,param):
             #todo: reference parent, adobt rules
             pass
-        self.chanSet["parent"] = func
+        self.chan_set["parent"] = func
         
         # set channel history limit callback
         def func(cls,param):
             cls._setHistoryLimit(param)
-        self.chanSet["historylimit"] = func
+        self.chan_set["historylimit"] = func
 
     """BETA"""
     def subscribe(self,channel,user):
@@ -106,11 +106,11 @@ class PubSub(object):
             try:
                 self.channels[row['channel']].updateItem(row, collection_id, announce)
             except KeyError:
-                self.load_channels()
+                self.loadChannels()
                 self.channels[row['channel']].updateItem(row, collection_id, announce)
 
     """BETA"""
-    def load_channels(self):
+    def loadChannels(self):
         rows = self.db.getChannels()
         for row in rows:
             if row['channel'] not in self.channels:
@@ -124,7 +124,7 @@ class Channel():
         self.subscribers = {}
         self.history = []
         self.library = {}
-        self.historyLimit = None
+        self.history_limit = None
         self.id = str(raw['id'])
         self.path = str(raw['channel'])
         self.name = str(raw['name'])
@@ -146,16 +146,16 @@ class Channel():
         for param in params:
             if param in settings.CHANNEL_PARAMS:
                 try:
-                    pubSubInstance.chanSet[param](self, params[param])
+                    pubSubInstance.chan_set[param](self, params[param])
                 except KeyError:
                     print "Channel callback {0} not set.".format(param)
 
     def _setHistoryLimit(self,limit):
-        self.historyLimit = limit
+        self.history_limit = limit
         self.cleanHistory()
 
     def cleanHistory(self):
-        if self.historyLimit:
+        if self.history_limit:
             #pop by oldest from self.history where self.limit > count
             #delete by id from self.library where id in popped data
             pass            
@@ -188,11 +188,11 @@ class Channel():
         if raw['id']:
             id = str(collection_id)+'_'+str(raw['id'])
             try:
-                pubSubInstance.masterList[id].update(raw,announce)
+                pubSubInstance.master_list[id].update(raw,announce)
             except KeyError:
-                pubSubInstance.masterList[id] = ChannelItem(raw,announce)
-            self.addToHistory(pubSubInstance.masterList[id])
-            self.library[id] = pubSubInstance.masterList[id]
+                pubSubInstance.master_list[id] = ChannelItem(raw,announce)
+            self.addToHistory(pubSubInstance.master_list[id])
+            self.library[id] = pubSubInstance.master_list[id]
 
 
 class ChannelItem():
@@ -334,4 +334,4 @@ class User():
 pubSubInstance = PubSub()
 pubSubInstance._buildGates()
 pubSubInstance._buildCallbacks()
-pubSubInstance.load_channels()
+pubSubInstance.loadChannels()
