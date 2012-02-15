@@ -2,7 +2,6 @@ import settings
 import uuid
 import tornado.web
 
-
 class PubSub(object):
     channels = {}
     master_list = {}
