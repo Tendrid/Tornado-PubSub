@@ -1,0 +1,15 @@
+Abstract:
+=========
+The Tornado PubSub project is a simple add-on to Tornado which implements a Publish / Subscribe server in python.
+
+Code Requirements:
+-----------
+Python 2.6 - 2.7 (http://python.org/)
+Tornado 2.0 + (http://www.tornadoweb.org/)
+Dojo 1.6 (http://dojotoolkit.org/)
+
+Usage:
+------
+
+::
+	Will be filled in when samples are in git
