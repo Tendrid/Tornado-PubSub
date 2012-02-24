@@ -105,7 +105,9 @@ var channel = function(raw){
 		if((typeof announce) == 'undefined'){ announce = true; }
 		var authToPub = true;
 		if(announce){
-			pipe.send(pipe.urls.new, message, pipe.onSuccess(response));
+			var _resp = function(response){console.log(response);}
+			pipe.send(pipe.urls.new, data, _resp);
+			authToPub = false;
 		}
 		if(authToPub){
 			dojo.publish(this.path, [data]);
@@ -155,6 +157,7 @@ var pipe = {
 	chanStore:false,
 	_cTree:{},
 	urls:{},
+	_poll:false,
 	init:function(params){
 		if((typeof params['urls'] == 'undefined')){
 			console.error('missing required params in pipe');
@@ -166,17 +169,22 @@ var pipe = {
 		}
 	},
 	poll: function() {
-		var args = {};
-		pipe.send(pipe.urls.poll, args, pipe.onSuccess, pipe.onError);
+		console.log(pipe._poll,typeof pipe._poll);
+		if(typeof pipe._poll != 'object'){
+			var args = {};
+			pipe._poll = pipe.send(pipe.urls.poll, args, pipe.onSuccess, pipe.onError);
+		}
 	},
 	onSuccess: function(response){
+		pipe._poll = false;
 		//pipe.errorSleepTime = 500;
 		window.setTimeout(pipe.poll, 0);
     },
     onError: function(response){
+		pipe._poll = false;
         this.errorSleepTime *= 2;
         console.error("Poll error; sleeping for", this.errorSleepTime, "ms");
-        window.setTimeout(this.poll, this.errorSleepTime);
+        window.setTimeout(pipe.poll, pipe.errorSleepTime);
     },
 	addChannel:function(raw){
 		this.channels[raw['path']] = new channel(raw);
@@ -224,7 +232,7 @@ var pipe = {
 				onError(_re);
 			}
 		}
-	    var deferred = dojo.xhrPost(xhrArgs);
+	    return dojo.xhrPost(xhrArgs);
 	},
 	receive:function(data){
         if(data.messages){

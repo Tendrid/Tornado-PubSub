@@ -10,10 +10,11 @@ class PubSub(object):
     _gate = {}
     _collections = {}
     users = {}
-
-    def connect(self,id):
+    
+    @classmethod
+    def connect(cls,id):
         try:
-            return self._collections[id]
+            return cls._collections[id]
         except:
             #todo: try to load collection from db, then fail
             return None
@@ -21,9 +22,14 @@ class PubSub(object):
     class _conn(object):
         def __init__(self,raw):
             raw = raw[0]
-            self.gate = pubSubInstance._gate[raw['gate']]
+            self.gate = PubSub._gate[raw['gate']]
             self.loc = raw['loc']
             self.db = self.gate.db()
+
+    def start(self):
+        self._buildGates()
+        self._buildCallbacks()
+        self.loadChannels()
     
     def _buildGates(self):
         for comm in __import__("gates.__init__").__all__:
@@ -76,12 +82,13 @@ class PubSub(object):
                     if not mlist[item[1]]:
                         mlist[item[1]] = c.library[item[1]]
                 except KeyError:
-                    mlist[item[1]] = c.library[item[1]]
+                    pass
+                    #mlist[item[1]] = c.library[item[1]]
             for item in mlist:
                 messages.append(mlist[item])
             if len(messages) > 0:
                 return messages
-        return None
+        return {}
     
     """BETA"""
     def waitForEvent(self, callback, user):
@@ -98,7 +105,7 @@ class PubSub(object):
             col = self._collections[collection_id]
         except:
             #todo: handle this
-            print "FAILED TO LOAD COLLECTION"
+            debug("FAILED TO LOAD COLLECTION")
             return None
         items = col.db.getChannelItems(col.loc)
         for row in items:
@@ -113,9 +120,22 @@ class PubSub(object):
         rows = self.db.getChannels()
         for row in rows:
             if row['channel'] not in self.channels:
-                print 'adding channel '+ row['channel']
+                debug('adding channel '+ row['channel'])
                 self.channels[row['channel']] = Channel(row)
         return self.channels
+    
+    def createChannelItem(self,raw,channels,collection_id):
+        raw['channels'] = channels
+        channel_ids = []
+        raw['collection_id'] = collection_id
+        for chan in channels:
+            channel_ids.append(PubSub.channels[chan].id)
+        id = self._collections[collection_id].db.putChannelItem(self._collections[collection_id].loc,raw,channel_ids)
+        raw['id'] = id
+        ci = ChannelItem(raw)
+        ci.update()
+        return ci.toObj()
+
 
 class Channel():
 
@@ -139,15 +159,15 @@ class Channel():
             #TODO: dont use eval. security!
             params = eval(params)
         except:
-            #print "error in params"
+            #debug("error in params")
             return
         #load settings
         for param in params:
             if param in settings.CHANNEL_PARAMS:
                 try:
-                    pubSubInstance.chan_set[param](self, params[param])
+                    PubSub.chan_set[param](self, params[param])
                 except KeyError:
-                    print "Channel callback {0} not set.".format(param)
+                    debug( "Channel callback {0} not set.".format(param))
 
     def _setHistoryLimit(self,limit):
         self.history_limit = limit
@@ -161,8 +181,7 @@ class Channel():
 
     def subscribe(self, user):
         self.subscribers[user.id()] = user
-        user.getUpdate(self)
-        user.runQueue()
+        user.loadChannel(self.path)
         try:
             return self.history[0]
         except IndexError:
@@ -184,31 +203,34 @@ class Channel():
         return {'id':self.id,'path':self.path,'name':self.name,'description':self.description}
     
     def updateItem(self,raw,collection_id,announce=True):
-        if raw['id']:
+        try:
             id = str(collection_id)+'_'+str(raw['id'])
             try:
-                pubSubInstance.master_list[id].update(raw,announce)
+                PubSub.master_list[id].update(raw,announce)
             except KeyError:
-                pubSubInstance.master_list[id] = ChannelItem(raw,announce)
-            self.addToHistory(pubSubInstance.master_list[id])
-            self.library[id] = pubSubInstance.master_list[id]
-
+                PubSub.master_list[id] = ChannelItem(raw,announce)
+            self.addToHistory(PubSub.master_list[id])
+            self.library[id] = PubSub.master_list[id]
+        except KeyError:
+            pass
 
 class ChannelItem():
     def __init__(self,raw,announce = False):
         self._id = raw['id']
         self.id = str(raw['collection_id'])+'_'+str(raw['id'])
+        print self.id
         self.data = {}
         self.channels = []
         self.update(raw.copy(),announce)
-        self.collection = pubSubInstance.connect(raw['collection_id'])
+        self.collection = PubSub.connect(raw['collection_id'])
+        PubSub.master_list[self.id] = self
 
-    def update(self,raw=None,pub=True):
+    def update(self,raw=None,announce=True):
         if not raw:
             raw = self.getFromDB()
         for k,v in raw.items():
             self.attr(k,v)
-        if pub:
+        if announce:
             self.publish()
     def publish(self):
         users = {}
@@ -220,9 +242,9 @@ class ChannelItem():
         #loop through users, execute queues
         for user in users.values():
             user.runQueue()
-                
+
     def getFromDB(self):
-        rows = self.collection.db.getChannelItem(self._id)
+        rows = self.collection.db.getChannelItem(self.collection.loc,self._id)
         for row in rows:
             return row
     def attr(self,key,val=False):
@@ -248,8 +270,7 @@ class ChannelItem():
             retVal['channels'].append(chan.path)
         return retVal
     def addChan(self,channel):
-        cls = PubSub
-        chan = cls.channels[channel]
+        chan = PubSub.channels[channel]
         if chan not in self.channels:
             self.channels.append(chan)
 
@@ -265,21 +286,19 @@ class User():
     def auth(self):
         #TODO: connect to db or whatever
         return true
-    def subscribe(self,channel,announce=True):
+    def subscribe(self,channel):
         try:
-            print self.name +' just subscribed to '+channel
-            hist = pubSubInstance.channels[channel].subscribe(self)
+            debug( self.name +' just subscribed to '+channel)
+            hist = PubSub.channels[channel].subscribe(self)
             if hist:
                 self.history[hist[1]] = hist[0]
-            self.channels[channel] = pubSubInstance.channels[channel]
+            self.channels[channel] = PubSub.channels[channel]
         except KeyError:
             #TODO: bubble up these errors
             return dict(error='invalid channel')
-        if announce:
-            self.loadChannel(channel)
     def unsubscribe(self,channel):
         try:
-            print self.name +' just unsubscribed to '+channel
+            debug( self.name +' just unsubscribed to '+channel)
             cls = PubSub
             cls.channels[channel].unsubscribe(self)
         except KeyError:
@@ -294,7 +313,9 @@ class User():
         cursor = self.getChannelCursor(channel)
         try:
             mlist = {}
-            c = pubSubInstance.channels[channel]
+            c = PubSub.channels[channel]
+            print "History:"
+            print c.history
             for item in c.history:
                 if cursor == item[0]:
                     break
@@ -329,8 +350,5 @@ class User():
         self.channels = {}
         self.queue = []
 
-#init
-pubSubInstance = PubSub()
-pubSubInstance._buildGates()
-pubSubInstance._buildCallbacks()
-pubSubInstance.loadChannels()
+def debug(v):
+    print v
