@@ -1,3 +1,4 @@
+import logging
 import settings
 import uuid
 import tornado.web
@@ -97,7 +98,8 @@ class PubSub(object):
             user.callback = callback
         else:
             #todo: clean up.  not universal.
-            self.finish(dict(error='Already logged in.',redirect='/reset/user'))
+            callback('Already Logged In','done')
+            del self.users[user.uid]
 
     """Loaders"""
     def preLoadData(self,collection_id,announce = False):
@@ -120,7 +122,7 @@ class PubSub(object):
         rows = self.db.getChannels()
         for row in rows:
             if row['channel'] not in self.channels:
-                debug('adding channel '+ row['channel'])
+                debug('adding channel {0}'.format(row['channel']))
                 self.channels[row['channel']] = Channel(row)
         return self.channels
     
@@ -175,9 +177,13 @@ class Channel():
 
     def cleanHistory(self):
         if self.history_limit:
-            #pop by oldest from self.history where self.limit > count
-            #delete by id from self.library where id in popped data
-            pass            
+            limit = self.history_limit - 1
+            while len(self.library) > limit:
+                last = self.history.pop()
+                k = last[1]
+                for item in [item for item in self.history if item[1] is k]:
+                    del self.history[item]
+                del self.library[k]
 
     def subscribe(self, user):
         self.subscribers[user.id()] = user
@@ -199,6 +205,7 @@ class Channel():
         return users
     def addToHistory(self, ci):
         self.history.insert(0,[str(uuid.uuid4()), ci.id])
+        self.cleanHistory()
     def toDict(self):
         return {'id':self.id,'path':self.path,'name':self.name,'description':self.description}
     
@@ -218,7 +225,6 @@ class ChannelItem():
     def __init__(self,raw,announce = False):
         self._id = raw['id']
         self.id = str(raw['collection_id'])+'_'+str(raw['id'])
-        print self.id
         self.data = {}
         self.channels = []
         self.update(raw.copy(),announce)
@@ -276,19 +282,24 @@ class ChannelItem():
 
 class User():
     def __init__(self, raw):
-        self.name = raw['name']
+        try:
+            self.uid = raw['uid']
+        except KeyError:
+            logging.warning("uid missing in user init")
+            self.uid = uuid.uuid4()
+        self.raw = raw
         self.history = {}
         self.callback = None
         self.channels = {}
         self.queue = []
     def id(self):
-        return self.name
+        return self.uid
     def auth(self):
         #TODO: connect to db or whatever
         return true
     def subscribe(self,channel):
         try:
-            debug( self.name +' just subscribed to '+channel)
+            debug( '{0} just subscribed to {1}'.format(self.uid,channel))
             hist = PubSub.channels[channel].subscribe(self)
             if hist:
                 self.history[hist[1]] = hist[0]
@@ -298,7 +309,7 @@ class User():
             return dict(error='invalid channel')
     def unsubscribe(self,channel):
         try:
-            debug( self.name +' just unsubscribed to '+channel)
+            debug( self.uid +' just unsubscribed to '+channel)
             cls = PubSub
             cls.channels[channel].unsubscribe(self)
         except KeyError:
@@ -314,8 +325,6 @@ class User():
         try:
             mlist = {}
             c = PubSub.channels[channel]
-            print "History:"
-            print c.history
             for item in c.history:
                 if cursor == item[0]:
                     break
@@ -349,6 +358,10 @@ class User():
         self.history = {}
         self.channels = {}
         self.queue = []
+    def toDict(self):
+        cb = 1 if self.callback else 0
+        return {'uid':self.uid,'history':self.history,'callback':cb,'channels':self.channels,'raw':self.raw}
+
 
 def debug(v):
     print v
