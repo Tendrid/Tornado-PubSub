@@ -2,6 +2,8 @@ import logging
 import settings
 import uuid
 import tornado.web
+import time
+import datetime
 
 class PubSub(object):
     channels = {}
@@ -22,10 +24,10 @@ class PubSub(object):
 
     class _conn(object):
         def __init__(self,raw):
-            raw = raw[0]
             self.gate = PubSub._gate[raw['gate']]
             self.loc = raw['loc']
             self.db = self.gate.db()
+            self.id = raw.id
 
     def start(self):
         self._buildGates()
@@ -37,7 +39,7 @@ class PubSub(object):
             self._gate[comm] = __import__("gates.{0}".format(comm),None,None,'*')
         coll = self._gate[settings.DEFAULT_STORAGE].db().getCollections()
         for collection in coll:
-            self._collections[collection.id] = self._conn(coll)
+            self._collections[collection.id] = self._conn(collection)
         self.db = self._gate[settings.DEFAULT_STORAGE].db()
 
     def _buildCallbacks(self):
@@ -94,12 +96,13 @@ class PubSub(object):
     """BETA"""
     def waitForEvent(self, callback, user):
         messages = self.getList(user)
-        if not user.callback:
-            user.callback = callback
-        else:
-            #todo: clean up.  not universal.
-            callback('Already Logged In','done')
-            del self.users[user.uid]
+        if user.callback:
+            user.noop()
+        user.callback = callback    
+#        else:
+#            todo: clean up.  not universal.
+#            callback('Already Logged In','done')
+#            del self.users[user.uid]
 
     """Loaders"""
     def preLoadData(self,collection_id,announce = False):
@@ -109,7 +112,8 @@ class PubSub(object):
             #todo: handle this
             debug("FAILED TO LOAD COLLECTION")
             return None
-        items = col.db.getChannelItems(col.loc)
+        items = col.db.getChannelItems(col.loc,col.id)
+        print str(len(items))
         for row in items:
             try:
                 self.channels[row['channel']].updateItem(row, collection_id, announce)
@@ -125,6 +129,9 @@ class PubSub(object):
                 debug('adding channel {0}'.format(row['channel']))
                 self.channels[row['channel']] = Channel(row)
         return self.channels
+    
+    def killUser(self,uid):
+        del self.users[uid]
     
     def createChannelItem(self,raw,channels,collection_id):
         raw['channels'] = channels
@@ -281,28 +288,43 @@ class ChannelItem():
             self.channels.append(chan)
 
 class User():
-    def __init__(self, raw):
-        try:
-            self.uid = raw['uid']
-        except KeyError:
-            logging.warning("uid missing in user init")
-            self.uid = uuid.uuid4()
+    def __init__(self, raw, uid=None):
+        if id:
+            self.uid = uid
+        else:
+            try:
+                self.uid = raw['uid']
+            except KeyError:
+                logging.warning("uid missing in user init")
+                self.uid = uuid.uuid4()
         self.raw = raw
         self.history = {}
         self.callback = None
         self.channels = {}
         self.queue = []
+        #self.lastUpdated = int(time.mktime(datetime.datetime.now().timetuple()))
+        self.times = {"lastPublished":0,"login":int(time.mktime(datetime.datetime.now().timetuple())),"lastUpdated" : int(time.mktime(datetime.datetime.now().timetuple()))}
     def id(self):
         return self.uid
+    def getTimes(self):
+        return self.times
     def auth(self):
         #TODO: connect to db or whatever
         return true
+    def noop(self):
+        callback = self.callback;
+        self.callback = None
+        dt = int(time.mktime(datetime.datetime.now().timetuple()))
+        out = callback(dt,'noop')
+        self.times['lastUpdated'] = dt
+        return out
     def subscribe(self,channel):
         try:
             debug( '{0} just subscribed to {1}'.format(self.uid,channel))
             hist = PubSub.channels[channel].subscribe(self)
-            if hist:
-                self.history[hist[1]] = hist[0]
+            #if hist:
+            #    #self.history[hist[1]] = hist[0]
+            #    self.history[channel] = hist[0]
             self.channels[channel] = PubSub.channels[channel]
         except KeyError:
             #TODO: bubble up these errors
@@ -348,6 +370,7 @@ class User():
             callback = self.callback
             self.callback = None
             callback(messages)
+            self.times["lastUpdated"] = int(time.mktime(datetime.datetime.now().timetuple()))
     def loadChannel(self,channel):
         messages = self.getUpdate(channel)
         self.runQueue()
@@ -360,8 +383,7 @@ class User():
         self.queue = []
     def toDict(self):
         cb = 1 if self.callback else 0
-        return {'uid':self.uid,'history':self.history,'callback':cb,'channels':self.channels,'raw':self.raw}
-
+        return {'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels.keys(),'raw':self.raw}
 
 def debug(v):
     print v

@@ -3,6 +3,7 @@
  */
 // show debug info in console
 var isDebug = false;
+dojo.require("dojox.encoding.digests.SHA1");
 
 function getCookie(name) {var r = document.cookie.match("\\b" + name + "=([^;]*)\\b"); return r ? r[1] : undefined;}
 Object.size = function(obj) { var size = 0, key; for (key in obj) { if (obj.hasOwnProperty(key)) size++; } return size; }
@@ -20,36 +21,14 @@ Object.size = function(obj) { var size = 0, key; for (key in obj) { if (obj.hasO
 var apps = {
 	ready:{},
 	files:{},
-	activate:function(){
-		for(var app in this.ready){
-			if(this.ready[app].activate){this.ready[app].activate();}
-		}
-	},
-	_match:function(channels){
-		var _out = [];
-		if((typeof channels) == 'string'){ channels = [channels]; }
-		for(channel in channels){
-			// match if not '*'
-			if(channels[channel].indexOf('*') > 0){
-				for(_ch in pipe.channels){
-					if(pipe.channels[_ch].path.match(channels[channel]) != ''){
-						_out.push(pipe.channels[_ch]);
-					}
-				}
-			}else{
-				_out.push(pipe.channels[channels[channel]]);
-			}
-		}
-		return _out;
-	},
 	/**
 	 * Fired under the scope of the created app
 	 */
-	mixin_sub:function(channels, callback){
+	_mixin_sub:function(callback, channels){
 		var me = this;
 		_cb = function(m){
-			if(typeof m == 'undefined'){
-				console.log('broken');
+			if(m == undefined){
+				if(isDebug){console.log('broken')};
 			}
 			me[callback](m);
 			me.library.put(m,{'id':m.id});
@@ -59,6 +38,48 @@ var apps = {
 			this._subs.push(dojo.subscribe(chan[ind].path, _cb));
 			this.channels[chan[ind].path] = chan[ind];
 		}
+	},
+	_mixin_activate:function(){
+		if(this.onLoad){
+			this.onLoad();
+		}
+		if(this.subscribe){
+			for(var i in this.subscribe){
+				this.sub(i, this.subscribe[i]);
+			}
+		}
+		if(this.onReady){
+			this.onReady();
+		}
+	},
+	_mixin_sort:function(key, descending, callback){
+		var _s = this.library.query({}, {sort: [{attribute: key,descending: descending}]}).forEach(function(item){
+			callback(item);
+		});
+	},
+	activate:function(){
+		for(var app in this.ready){
+			if(this.ready[app].activate){				
+				this.ready[app].activate();
+			}
+		}
+	},
+	_match:function(channels){
+		var _out = [];
+		if((typeof channels) == 'string'){ channels = [channels]; }
+		for(channel in channels){
+			// match if not '*'
+			if(channels[channel].indexOf('*') > 0){
+				for(_ch in pipe.channels){
+					if(_ch.match(channels[channel]) != null){
+						_out.push(pipe.channels[_ch]);
+					}
+				}
+			}else{
+				_out.push(pipe.channels[channels[channel]]);
+			}
+		}
+		return _out;
 	},
 	hook:function(args){
 		//TODO: use dojo.connect / dojo.hitch
@@ -88,10 +109,11 @@ var apps = {
 			if(this.ready[app]){
 				// app already registered!
 			}else{
+
 				this.ready[app] = apps[app];
 				this.ready[app].channels = {};
 				this.ready[app]._subs = [];
-				dojo.mixin(this.ready[app],{'sub':this.mixin_sub});
+				dojo.mixin(this.ready[app],{'sub':this._mixin_sub,'activate':this._mixin_activate,'sort':this._mixin_sort});
 				this.ready[app].library = new dojo.store.Memory();
 			}
 		}
@@ -144,8 +166,6 @@ var channel = function(raw){
 	this.path = raw['path'];
 	this.description = raw['description'];
 	this.subscribed = false;
-	this.cursor = '';
-	//this.library = {};
 	this._callbacks = {};
 	this.library = new dojo.store.Memory();
 	this._handle = false;
@@ -161,15 +181,15 @@ var channel = function(raw){
 				// get valid dijit
 				var d = dijit.byId(this._hooks[event][state][e].obj);
 				// get valid app
-				if(typeof d == 'undefined'){
+				if(d == undefined){
 					d = apps.ready[this._hooks[event][state][e].obj];
 				}
 				// get valid js object
-				if(typeof d == 'undefined'){
+				if(d == undefined){
 					d = window[this._hooks[event][state][e].obj];
 				}
 				// or delete object for garbage collection
-				if(typeof d == 'undefined'){
+				if(d == undefined){
 					delete this._hooks[event][state][e];
 				}else{
 					// then fire hook
@@ -191,12 +211,11 @@ var channel = function(raw){
 	},
 	this.publish = function(data, announce){
 		if(isDebug){console.info('publishing channel: '+this.path);}
-		if((typeof announce) == 'undefined'){ announce = true; }
+		if(announce == undefined){ announce = true; }
 		var authToPub = true;
 		if(announce){
-			var _resp = function(response){console.log('hit');}
+			var _resp = function(response){}
 			pipe.send(pipe.urls.publish, data, _resp);
-			//alert('post');
 			authToPub = false;
 		}
 		if(authToPub){
@@ -215,43 +234,28 @@ var channel = function(raw){
 		}
 		items = this.library.query();
 		for (var ind in items){
-			//if(sub){console.log(items[ind]);this.publish(items[ind],false);}
 			var d = dijit.byId(items[ind].id);
 			if(d){d.weighChannel();}
 		}
-		/*
-		this.library.query().forEach(function(item,a,b,c,d){
-			// TODO: we need to destory these so we dont have memory leaks and sort issues
-			if(sub){
-				cls.publish(item,false);
-			}
-			var d = dijit.byId(item.id);
-			if(d){d.weighChannel();}
-		});
-		*/
-		// TODO: write subscrbie xhr here
-		// pass in announce, check if we need to reach out and requesst
+		// TODO: write subscribe xhr here
+		// pass in announce, check if we need to reach out and request
 		// or if it has been assigned from a page load
 	}
 	this.subscribe = function(announce){
 		this._fire_hook(PUBSUB.EVENTS.SUBSCRIBE, PUBSUB.STATE.PRE, this);
 		if(!this.subscribed){
-			if((typeof announce) == 'undefined'){announce = true;}
+			if(announce == undefined){announce = true;}
 			this._sub(true,announce);
 		}
 		this._fire_hook(PUBSUB.EVENTS.SUBSCRIBE, PUBSUB.STATE.POST, this);
-		//this._clear_hook(PUBSUB.EVENTS.SUBSCRIBE, PUBSUB.STATE.PRE);
-		//this._clear_hook(PUBSUB.EVENTS.SUBSCRIBE, PUBSUB.STATE.POST);
 	}
 	this.unsubscribe = function(announce){
 		this._fire_hook(PUBSUB.EVENTS.UNSUBSCRIBE, PUBSUB.STATE.PRE, this);
 		if(this.subscribed){
-			if((typeof announce) == 'undefined'){announce = true;}
+			if(announce == undefined){announce = true;}
 			this._sub(false,announce);
 		}
 		this._fire_hook(PUBSUB.EVENTS.UNSUBSCRIBE, PUBSUB.STATE.POST, this);
-		//this._clear_hook(PUBSUB.EVENTS.UNSUBSCRIBE, PUBSUB.STATE.PRE);
-		//this._clear_hook(PUBSUB.EVENTS.UNSUBSCRIBE, PUBSUB.STATE.POST);
 	}
 	this._sendSubReq = function(sub){
 		subUrl = (sub) ? pipe.urls.subscribe : pipe.urls.unsubscribe;
@@ -264,41 +268,85 @@ var channel = function(raw){
 }
 
 var pipe = {
-	errorSleepTime: 5000000,
+	errorSleepTime: 500,
 	channels:{},
 	chanStore:false,
 	_cTree:{},
 	urls:{},
 	_poll:false,
 	active:false,
-	init:function(params){
-		if((typeof params['urls'] == 'undefined')){
+	pollOnReady:false,
+	session_id:dojox.encoding.digests.SHA1(getCookie('user') + Math.round((new Date()).getTime())),
+	init:function(params,onReady){
+		if(params['urls'] == undefined){
 			console.error('missing required params in pipe');
 		}
 		pipe.urls = params['urls'];
-		
-		for(chan in channels){
-			pipe.addChannel(channels[chan]);
+		if(pipe.urls.home == 'undefined'){
+			pipe.urls.home = '/';
 		}
-		pipe.active = true;
+		pipe.pollOnReady = (params['pollOnReady']) ? true : false;
+		pipe.noopInterval = (params['noopInterval']) ? (params['noopInterval']+60)*1000 : false;
+		
+		if(params['channels']){
+			for(chan in params['channels']){
+				pipe.addChannel(params['channels'][chan]);
+			}
+			pipe._postInit(onReady);
+		}else{
+			pipe.send(pipe.urls.channelList, {}, function(item){
+				for(var i in item['channels']){
+					pipe.addChannel(item['channels'][i]);
+				}
+				pipe._postInit(onReady);
+			});
+		}
 	},
-	poll: function() {
+	getChannelList:function(){
+		pipe.send(pipe.urls.channelList, {}, function(item){
+			for(var i in item['channels']){
+				if(pipe.channels[item['channels'][i].path] == undefined){
+					pipe.addChannel(item['channels'][i]);
+				}
+			}
+		});
+	},
+	_postInit:function(onReady){
+		pipe.active = true;
+		if(pipe.pollOnReady){
+			pipe.poll();
+		}
+		onReady();
+	},
+	poll:function(){
 		if(typeof pipe._poll != 'object' && pipe.active == true){
-			var args = {};
+			var args = {'channels':''};
+			for(chan in pipe.channels){
+				if(args['channels']!=''){args['channels'] += ',';}
+				args['channels'] += chan;
+			}
 			pipe._poll = pipe.send(pipe.urls.poll, args, pipe.onSuccess, pipe.onError);
 		}
 	},
-	onSuccess: function(response){
+	onSuccess:function(response){
 		pipe._poll = false;
-		//pipe.errorSleepTime = 500;
+		pipe.errorSleepTime = 500;
 		window.setTimeout(pipe.poll, 0);
     },
-    onError: function(response){
+    onError:function(response){
 		pipe._poll = false;
         this.errorSleepTime *= 2;
         console.error("Poll error; sleeping for", this.errorSleepTime, "ms");
         window.setTimeout(pipe.poll, pipe.errorSleepTime);
     },
+    onTimeout:function(){
+		_poll = pipe._poll;
+		pipe._poll = false;
+		pipe.poll();
+		if(_poll.fired < 1){
+			_poll.cancel();
+		}
+	},
 	addChannel:function(raw){
 		this.channels[raw['path']] = new channel(raw);
 		var tree = raw['path'].split('/');
@@ -306,7 +354,7 @@ var pipe = {
 		var _t = {};
 		var _tr = _t;
 		for(var i in tree){
-			if(typeof cTree[tree[i]] == 'undefined'){
+			if(cTree[tree[i]] == undefined){
 				cTree[tree[i]] = {};
 			}
 			_t[tree[i]] = {};
@@ -325,7 +373,7 @@ var pipe = {
 		return r;
 	},
 	send:function(url, args, onSuccess, onError){
-		//args._xsrf = getCookie("_xsrf");
+		if(pipe.session_id){args.session_id = pipe.session_id;}
 		if(!onSuccess){ onSuccess = function(response){} }
 		if(!onError){ onError = function(response){} }
 		var xhrArgs = {
@@ -341,9 +389,13 @@ var pipe = {
 				}
 			},
 			error: function(err,xhrobj) {
-				console.error("ERROR:", err,xhrobj);
-				//onError(response);
-			}
+				if(err.dojoType == 'timeout'){
+					pipe.onTimeout();
+				}else{
+					pipe.onError(err);				
+				}
+			},
+			timeout:pipe.noopInterval
 		}
 	    return dojo.xhrPost(xhrArgs);
 	},
@@ -359,15 +411,25 @@ var pipe = {
             return true;
 		}else if(data.ok){
 			return true;
+		}else if(data.channels){
+			return true;
         }else{
         	return false;
         }
 	},
 	cmd:function(message, cmd){
-		console.log('COMMAND: ',cmd);
-		if(cmd == 'done'){
-			pipe.active = false;
-			pipe._poll = false;
+		if(isDebug){console.log('COMMAND: ',cmd)};
+		switch(cmd){
+			case 'done':
+				//pipe.active = false;
+				pipe._poll = false;
+				break;
+			case 'refresh':
+				self.redirect(pipe.urls.home);
+			case 'getChannelList':
+				pipe.getChannelList();
+			case 'noop':
+				break;
 		}
 		return true;
 	},
@@ -375,7 +437,7 @@ var pipe = {
 		if(data['redirect']){ pipe.redirect(data['redirect']); }
 	},
 	redirect:function(uri){
-		//console.log('REDIRECT: '+url)
-		//window.location = uri;
+		console.log('REDIRECT: '+url)
+		window.location = uri;
 	}
 }
