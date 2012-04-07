@@ -99,6 +99,7 @@ class Base(object):
             session_id = self.get_argument("session_id", None)
         if session_id == None:
             return False
+        session_id = tornado.escape.url_unescape(session_id)
         user_json = self.get_secure_cookie("user")
         if not user_json: return None
         u = tornado.escape.json_decode(user_json)

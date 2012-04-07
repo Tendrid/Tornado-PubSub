@@ -319,7 +319,7 @@ var pipe = {
 	rl:0,
 //	isXSite:false,
 //	useWebsockets:true,
-	session_id:dojox.encoding.digests.MD5(getCookie('user') + Math.round((new Date()).getTime())),
+	session_id:dojox.encoding.digests.MD5(getCookie('user') + Math.round((new Date()).getTime()),dojox.encoding.digests.outputTypes.Hex),
 	init:function(params,onReady){
 		pipe.rl=1;
 		pipe.onReady = (onReady) ? onReady : function(){};
@@ -384,6 +384,7 @@ var pipe = {
 		pipe.inRetry = true;
 	},
 	regainConnetion:function(){
+		console.lot('regained?');
 		apps.onErrorClear(PUBSUB.SYS_MESSAGE.CONNECTION_RESTORED);
 		pipe.inRetry = false;
 	},
@@ -400,10 +401,10 @@ var pipe = {
     	if(!pipe.inRetry){
     		pipe.lostConnection();
     	}
-		if(this.errorSleepTime < 120000){
-			this.errorSleepTime *= 2;
+		if(pipe.errorSleepTime < 120000){
+			pipe.errorSleepTime *= 2;
 		}
-		if(isDebug){ console.error("connect error; sleeping for", this.errorSleepTime, "ms"); }
+		if(isDebug){ console.error("connect error; sleeping for", pipe.errorSleepTime, "ms"); }
 		window.setTimeout(pipe.connect, pipe.errorSleepTime);
     },
 	addChannel:function(raw){
@@ -517,7 +518,7 @@ _pipe_mixins = {
 							pipe.errorMessage(_re);
 						}
 					});
-					
+					pipe._socket.on("error", pipe.onTimeout);
 					if(callback){
 						pipe._socket.on('open',function(event){callback()});
 					}
@@ -530,14 +531,15 @@ _pipe_mixins = {
 		    	if(!pipe.inRetry){
 		    		pipe.lostConnection();
 		    	}
-				if(this.errorSleepTime < 120000){
-					this.errorSleepTime *= 2;
+				if(pipe.errorSleepTime < 120000){
+					pipe.errorSleepTime *= 2;
 				}
-				if(isDebug){ console.error("Connect error; sleeping for", this.errorSleepTime, "ms"); }
-				window.setTimeout(pipe.connect, pipe.errorSleepTime);
+				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
+				window.setTimeout(function(){pipe.connect();}, pipe.errorSleepTime);
 			},
 			close:function(){
 				pipe._socket.close();
+				pipe._socket = false;
 			}
 		},
 		'http':{
@@ -602,12 +604,11 @@ _pipe_mixins = {
 		    	if(!pipe.inRetry){
 		    		pipe.lostConnection();
 		    	}
-				if(this.errorSleepTime < 120000){
-					this.errorSleepTime *= 2;
+				if(pipe.errorSleepTime < 120000){
+					pipe.errorSleepTime *= 2;
 				}
-				if(isDebug){ console.error("Connect error; sleeping for", this.errorSleepTime, "ms"); }
+				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
 				window.setTimeout(pipe.connect, pipe.errorSleepTime);
-//		    	console.log(dojo.io.script);
 			}
 		},
 		'jsonp':{
