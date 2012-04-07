@@ -18,10 +18,10 @@ class Base(object):
     def pubSubInstance(self):
         if self._psi == None:
             self._psi = PubSub()
-            self._psi.start()
-            print "WHY ARE WE HERE? -------------------------------------------------------------------------------------------"
-            self._psi.preLoadData(1)
-            self._psi.preLoadData(2)
+            if self._psi._rl == 0:
+                self._psi.start()
+                self._psi.preLoadData(1)
+                self._psi.preLoadData(2)
         return self._psi
 
     @property
@@ -116,5 +116,4 @@ class Base(object):
             except KeyError:
                 self.clear_cookie('user')
                 pass
-        return        
-    
+        return

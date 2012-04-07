@@ -13,16 +13,17 @@ class PubSub(object):
     _gate = {}
     _collections = {}
     users = {}
-    singelton = None    #set to False if you want multiple pubsub instances
+    _engines = {}
+    _rl = 0
 
-    def __new__(cls, *args, **kwargs):
-        if cls.singelton == False:
-            return super(PubSub, cls).__new__(cls, *args, **kwargs)
-        else:
-            if cls.singelton == None:
-                cls.singelton = super(PubSub, cls).__new__(cls, *args, **kwargs)
-            return cls.singelton
-
+    def __new__(cls, instance='default', *args, **kwargs):
+        try:
+            cls._engines[instance]
+            return cls._engines[instance]
+        except KeyError:
+            cls._engines[instance] = super(PubSub, cls).__new__(cls, *args, **kwargs)
+            return cls._engines[instance]
+   
     @classmethod
     def connect(cls,id):
         try:
@@ -39,9 +40,11 @@ class PubSub(object):
             self.id = raw.id
 
     def start(self):
+        self._rl = 1
         self._buildGates()
         self._buildCallbacks()
         self.loadChannels()
+        self._rl = 2
     
     def _buildGates(self):
         for comm in __import__("gates.__init__").__all__:
