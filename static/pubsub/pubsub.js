@@ -392,7 +392,7 @@ var pipe = {
     		pipe.regainConnetion();
     	}
 		pipe._poll = false;
-		pipe.errorSleepTime = 500;
+		pipe.errorSleepTime = 2000;
 		//window.setTimeout(pipe.connect, 0);
     },
     onError:function(response){
@@ -584,7 +584,7 @@ _pipe_mixins = {
 							}
 						}
 						if(paths != ''){
-							pipe.send(pipe.urls.send, {'channel':paths}, function(response) {
+							pipe.send(pipe.urls.send, {'channel':paths,'cmd':'subscribe'}, function(response) {
 						    	if(response['error']){
 						    		console.error('error: '+response['error']);
 						    	}
