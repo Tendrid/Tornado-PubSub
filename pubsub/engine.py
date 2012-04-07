@@ -13,7 +13,16 @@ class PubSub(object):
     _gate = {}
     _collections = {}
     users = {}
-    
+    singelton = None    #set to False if you want multiple pubsub instances
+
+    def __new__(cls, *args, **kwargs):
+        if cls.singelton == False:
+            return super(PubSub, cls).__new__(cls, *args, **kwargs)
+        else:
+            if cls.singelton == None:
+                cls.singelton = super(PubSub, cls).__new__(cls, *args, **kwargs)
+            return cls.singelton
+
     @classmethod
     def connect(cls,id):
         try:
@@ -68,7 +77,8 @@ class PubSub(object):
         except KeyError:
             return None
         
-    """BETA"""
+    """
+    DEPRECATED
     def getList(self,user):
         for channel in user.channels:
             messages = []
@@ -92,18 +102,8 @@ class PubSub(object):
             if len(messages) > 0:
                 return messages
         return {}
+    """
     
-    """BETA"""
-    def waitForEvent(self, callback, user):
-        messages = self.getList(user)
-        if user.callback:
-            user.noop()
-        user.callback = callback    
-#        else:
-#            todo: clean up.  not universal.
-#            callback('Already Logged In','done')
-#            del self.users[user.uid]
-
     """Loaders"""
     def preLoadData(self,collection_id,announce = False):
         try:
@@ -113,7 +113,6 @@ class PubSub(object):
             debug("FAILED TO LOAD COLLECTION")
             return None
         items = col.db.getChannelItems(col.loc,col.id)
-        print str(len(items))
         for row in items:
             try:
                 self.channels[row['channel']].updateItem(row, collection_id, announce)
@@ -184,13 +183,21 @@ class Channel():
 
     def cleanHistory(self):
         if self.history_limit:
-            limit = self.history_limit - 1
+            limit = self.history_limit
             while len(self.library) > limit:
                 last = self.history.pop()
                 k = last[1]
                 for item in [item for item in self.history if item[1] is k]:
-                    del self.history[item]
+                    # watch for items left behind that have been edited
+                    del item
+                    #del self.history[item]
                 del self.library[k]
+                try:
+                    PubSub.master_list[k].removeChan(self.path)
+                    if len(PubSub.master_list[k].channels) == 0:
+                        del PubSub.master_list[k]
+                except KeyError:
+                    pass
 
     def subscribe(self, user):
         self.subscribers[user.id()] = user
@@ -223,13 +230,16 @@ class Channel():
                 PubSub.master_list[id].update(raw,announce)
             except KeyError:
                 PubSub.master_list[id] = ChannelItem(raw,announce)
+                
             self.addToHistory(PubSub.master_list[id])
             self.library[id] = PubSub.master_list[id]
         except KeyError:
             pass
 
+
 class ChannelItem():
     def __init__(self,raw,announce = False):
+#        print 'new ci --------------------------------------------------------------------------------------------------'
         self._id = raw['id']
         self.id = str(raw['collection_id'])+'_'+str(raw['id'])
         self.data = {}
@@ -250,7 +260,7 @@ class ChannelItem():
         #loop through all channels
         for chan in self.channels:
             #get a list of users subscribed to channel
-            for user in chan.publish(self):
+            for user in PubSub.channels[chan].publish(self):
                 users[user.id] = user
         #loop through users, execute queues
         for user in users.values():
@@ -280,12 +290,16 @@ class ChannelItem():
         retVal['id'] = self.id
         retVal['channels'] = []
         for chan in self.channels:
-            retVal['channels'].append(chan.path)
+            retVal['channels'].append(chan)
         return retVal
     def addChan(self,channel):
         chan = PubSub.channels[channel]
-        if chan not in self.channels:
-            self.channels.append(chan)
+        if chan.path not in self.channels:
+            self.channels.append(chan.path)
+    def removeChan(self,channel):
+        for i,c in enumerate(self.channels):
+            if c == channel:
+                del self.channels[i]
 
 class User():
     def __init__(self, raw, uid=None):
@@ -298,12 +312,12 @@ class User():
                 logging.warning("uid missing in user init")
                 self.uid = uuid.uuid4()
         self.raw = raw
-        self.history = {}
-        self.callback = None
-        self.channels = {}
-        self.queue = []
-        #self.lastUpdated = int(time.mktime(datetime.datetime.now().timetuple()))
+        self.reset()
         self.times = {"lastPublished":0,"login":int(time.mktime(datetime.datetime.now().timetuple())),"lastUpdated" : int(time.mktime(datetime.datetime.now().timetuple()))}
+    def waitForEvent(self, callback):
+        if self.callback:
+            self.noop()
+        self.callback = callback  
     def id(self):
         return self.uid
     def getTimes(self):
@@ -311,29 +325,38 @@ class User():
     def auth(self):
         #TODO: connect to db or whatever
         return true
+    def send(self,msg=None,cmd=None):
+        if self.callback:
+            reset = self.callback(msg,cmd,self)
+            self.times['lastUpdated'] = int(time.mktime(datetime.datetime.now().timetuple()))
+        if reset:
+            self.callback = None
     def noop(self):
-        callback = self.callback;
-        self.callback = None
         dt = int(time.mktime(datetime.datetime.now().timetuple()))
-        out = callback(dt,'noop')
-        self.times['lastUpdated'] = dt
+        out = self.send(dt,'noop')
         return out
+        """
+        if self.callback:
+            callback = self.callback;
+            self.callback = None
+            dt = int(time.mktime(datetime.datetime.now().timetuple()))
+            out = callback(dt,'noop')
+            self.times['lastUpdated'] = dt
+            return out
+        """
     def subscribe(self,channel):
         try:
             debug( '{0} just subscribed to {1}'.format(self.uid,channel))
             hist = PubSub.channels[channel].subscribe(self)
-            #if hist:
-            #    #self.history[hist[1]] = hist[0]
-            #    self.history[channel] = hist[0]
-            self.channels[channel] = PubSub.channels[channel]
+            if channel not in self.channels:
+                self.channels.append(channel)
         except KeyError:
             #TODO: bubble up these errors
             return dict(error='invalid channel')
     def unsubscribe(self,channel):
         try:
             debug( self.uid +' just unsubscribed to '+channel)
-            cls = PubSub
-            cls.channels[channel].unsubscribe(self)
+            PubSub.channels[channel].unsubscribe(self)
         except KeyError:
             #TODO: bubble up these errors
             return dict(error='invalid channel')
@@ -344,6 +367,8 @@ class User():
             return None
     def getUpdate(self,channel):
         cursor = self.getChannelCursor(channel)
+        print cursor
+        print PubSub.channels[channel].history
         try:
             mlist = {}
             c = PubSub.channels[channel]
@@ -367,23 +392,28 @@ class User():
         if self.queue != [] and self.callback:
             messages = self.queue
             self.queue = []
-            callback = self.callback
-            self.callback = None
-            callback(messages)
-            self.times["lastUpdated"] = int(time.mktime(datetime.datetime.now().timetuple()))
+#            callback = self.callback
+#            self.callback = None
+#            callback(sorted(messages, key=lambda id: id))
+            self.send(sorted(messages, key=lambda id: id))
+#            self.times["lastUpdated"] = int(time.mktime(datetime.datetime.now().timetuple()))
     def loadChannel(self,channel):
         messages = self.getUpdate(channel)
         self.runQueue()
     def reset(self):
-        #this can be done way better
-        self.callback(False)
+        try:
+            if self.callback:
+                self.send(False)
+#                self.callback(False)
+        except AttributeError:
+            pass
         self.callback = None
         self.history = {}
-        self.channels = {}
+        self.channels = []
         self.queue = []
     def toDict(self):
         cb = 1 if self.callback else 0
-        return {'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels.keys(),'raw':self.raw}
+        return {'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels,'raw':self.raw}
 
 def debug(v):
     print v
