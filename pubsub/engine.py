@@ -170,8 +170,12 @@ class Channel():
             #TODO: dont use eval. security!
             params = eval(params)
         except:
-            #debug("error in params")
-            return
+            params = {}
+        #default settings
+        try:
+            params['historylimit']
+        except:
+            params['historylimit'] = 25
         #load settings
         for param in params:
             if param in settings.CHANNEL_PARAMS:
@@ -370,8 +374,8 @@ class User():
             return None
     def getUpdate(self,channel):
         cursor = self.getChannelCursor(channel)
-        print cursor
-        print PubSub.channels[channel].history
+#        print cursor
+#        print PubSub.channels[channel].history
         try:
             mlist = {}
             c = PubSub.channels[channel]
