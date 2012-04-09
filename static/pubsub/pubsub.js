@@ -7,7 +7,7 @@ dojo.require("dojox.encoding.digests.MD5");
 dojo.require("dojo.io.script");
 dojo.require("dojo.store.Memory");
 dojo.require("dojox.socket");
-
+dojo.require("dojox.socket.Reconnect");
 
 function getCookie(name) {var r = document.cookie.match("\\b" + name + "=([^;]*)\\b"); return r ? r[1] : undefined;}
 Object.size = function(obj) { var size = 0, key; for (key in obj) { if (obj.hasOwnProperty(key)) size++; } return size; }
@@ -330,6 +330,10 @@ var pipe = {
 		if(pipe.urls.home == 'undefined'){
 			pipe.urls.home = '/';
 		}
+		if(pipe.urls.auth == 'undefined'){
+			console.error('missing required url: auth');			
+		}
+		if(getCookie('user') == undefined){ pipe.redirect(pipe.urls.auth); }
 		pipe.useWebsockets = ("WebSocket" in window && pipe.urls.socket) ? true : false;
 		pipe.connectOnReady = (params['connectOnReady']) ? true : false;
 		pipe.noopInterval = (params['noopInterval']) ? (params['noopInterval']+60)*1000 : false;
@@ -384,9 +388,25 @@ var pipe = {
 		pipe.inRetry = true;
 	},
 	regainConnetion:function(){
-		console.lot('regained?');
 		apps.onErrorClear(PUBSUB.SYS_MESSAGE.CONNECTION_RESTORED);
 		pipe.inRetry = false;
+	},
+	refreshCurrentChannels:function(){
+		console.info('in pipe.refreshCurrentChannels');
+		var paths = '';
+		for(var i in pipe.channels){
+			if(pipe.channels[i].subscribed){
+				if(paths != ''){paths+=',';}
+				paths += pipe.channels[i].path;
+			}
+		}
+		if(paths != ''){
+			pipe.send(pipe.urls.send, {'channel':paths,'cmd':'subscribe'}, function(response) {
+		    	if(response['error']){
+		    		console.error('error: '+response['error']);
+		    	}
+		    });
+		}		
 	},
 	onSuccess:function(response){
     	if(pipe.inRetry){
@@ -394,7 +414,6 @@ var pipe = {
     	}
 		pipe._poll = false;
 		pipe.errorSleepTime = 2000;
-		//window.setTimeout(pipe.connect, 0);
     },
     onError:function(response){
 		pipe._poll = false;
@@ -432,19 +451,6 @@ var pipe = {
 		}
 		return r;
 	},
-	/*
-	send:function(url, args, onSuccess, onError){
-		if(pipe.useWebsockets){
-			pipe._sendWebSocket(url, args, onSuccess, onError);
-		}else{
-			if(pipe.isXSite){
-				return pipe._sendXSite(url, args, onSuccess, onError);
-			}else{
-				return pipe._sendXhr(url, args, onSuccess, onError);
-			}
-		}
-	},
-	*/
 	receive:function(data){
 		if(data.cmd){
 			return this.cmd(data.messages, data.cmd);
@@ -503,17 +509,18 @@ _pipe_mixins = {
 				}
 			},
 			connect:function(callback){
-				if(callback==undefined){callback = function(event){};}
+				if(typeof callback != 'object'){delete callback;}
 				if(pipe._socket == false){
 					var args = {'url':pipe.urls.socket+'/'+pipe.session_id};
 					pipe._socket = dojox.socket(args);
+					pipe._socket = dojox.socket.Reconnect(pipe._socket,{reconnectTime:pipe.errorSleepTime,backoffRate:2});
 					pipe._socket.on("message", function(event){
 						var response = event.data;
 						if(response == ""){pipe.onError(response); return false;}
 						var _re = dojo.fromJson(response);
 						if(isDebug){console.dir(_re);}
 						if( pipe.receive(_re) ){
-							//onSuccess(_re);
+							pipe.onSuccess(_re);
 						}else{
 							pipe.errorMessage(_re);
 						}
@@ -521,25 +528,29 @@ _pipe_mixins = {
 					pipe._socket.on("error", pipe.onTimeout);
 					if(callback){
 						pipe._socket.on('open',function(event){callback()});
+					}else if(pipe.inRetry){
+						pipe.regainConnetion();
+						pipe.refreshCurrentChannels();
 					}
+				}else if(pipe._socket.readyState == pipe._socket.CLOSED){
+					pipe._socket.reconnect();
 				}else{
-					callback();
+					if(callback){
+						callback();
+					}
 				}
 			},
 			onTimeout:function(){
 				pipe.close();
+				pipe._socket.on("open",pipe.refreshCurrentChannels);
 		    	if(!pipe.inRetry){
 		    		pipe.lostConnection();
 		    	}
-				if(pipe.errorSleepTime < 120000){
-					pipe.errorSleepTime *= 2;
-				}
-				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
-				window.setTimeout(function(){pipe.connect();}, pipe.errorSleepTime);
+//				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
 			},
 			close:function(){
 				pipe._socket.close();
-				pipe._socket = false;
+				//pipe._socket = false;
 			}
 		},
 		'http':{
@@ -577,21 +588,9 @@ _pipe_mixins = {
 				if(typeof pipe._poll != 'object' && pipe.active == true){
 					var args = {};
 					pipe._poll = pipe.send(pipe.urls.poll, args, function(){pipe.onSuccess(); pipe.connect();}, pipe.onError);
+
 					if(pipe.inRetry){
-						var paths = '';
-						for(var i in pipe.channels){
-							if(pipe.channels[i].subscribed){
-								if(paths != ''){paths+=',';}
-								paths += pipe.channels[i].path;
-							}
-						}
-						if(paths != ''){
-							pipe.send(pipe.urls.send, {'channel':paths,'cmd':'subscribe'}, function(response) {
-						    	if(response['error']){
-						    		console.error('error: '+response['error']);
-						    	}
-						    });
-						}
+						pipe.refreshCurrentChannels();
 					}
 				}
 			},
