@@ -330,8 +330,8 @@ var pipe = {
 		if(pipe.urls.home == 'undefined'){
 			pipe.urls.home = '/';
 		}
-		if(pipe.urls.auth){
-			if(getCookie('user') == undefined){ pipe.redirect(pipe.urls.auth); }
+		if(pipe.urls.auth && getCookie('user')){
+			pipe.redirect(pipe.urls.auth);
 		}
 		pipe.useWebsockets = ("WebSocket" in window && pipe.urls.socket) ? true : false;
 		pipe.connectOnReady = (params['connectOnReady']) ? true : false;
