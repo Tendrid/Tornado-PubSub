@@ -330,10 +330,9 @@ var pipe = {
 		if(pipe.urls.home == 'undefined'){
 			pipe.urls.home = '/';
 		}
-		if(pipe.urls.auth == 'undefined'){
-			console.error('missing required url: auth');			
+		if(pipe.urls.auth != 'undefined'){
+			if(getCookie('user') == undefined){ pipe.redirect(pipe.urls.auth); }
 		}
-		if(getCookie('user') == undefined){ pipe.redirect(pipe.urls.auth); }
 		pipe.useWebsockets = ("WebSocket" in window && pipe.urls.socket) ? true : false;
 		pipe.connectOnReady = (params['connectOnReady']) ? true : false;
 		pipe.noopInterval = (params['noopInterval']) ? (params['noopInterval']+60)*1000 : false;
