@@ -32,7 +32,7 @@ class Base(object):
         
     def receiveCommand(self,data,user=None):
         if self._receive_cmd == None:
-            self._receive_cmd = {'subscribe':self._r_sub, 'unsubscribe':self._r_sub, 'getChannelList':self._r_gcl, 'getUserInfo':self._r_gui}
+            self._receive_cmd = {'subscribe':self._r_sub, 'unsubscribe':self._r_sub, 'getChannelList':self._r_gcl, 'getUserInfo':self._r_gui,'ping':self._r_ping}
         try:
             func = self._receive_cmd[data['cmd']]
             retVal = func(data,user)
@@ -74,10 +74,18 @@ class Base(object):
 
     def _r_gui(self,data,user):
         try:
-            user = self.pubSubInstance.users[data['session_id']]
-            self.out(dict(user=user.toDict()))
+            _u = self.pubSubInstance.users[data['session_id']]
+            if _u == user:
+                self.out(dict(user=user.toDict()))
+            else:
+                # TODO: limit the data here unless privliaged
+                self.out(dict(user=_u.toDict()))
+                
         except KeyError:
             self.out(dict(error='invalid user'))
+
+    def _r_ping(self,data,user):
+        self.out(dict(cmd='pong'))
 
     """
     send

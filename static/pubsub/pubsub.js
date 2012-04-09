@@ -6,8 +6,6 @@ var isDebug = false;
 dojo.require("dojox.encoding.digests.MD5");
 dojo.require("dojo.io.script");
 dojo.require("dojo.store.Memory");
-dojo.require("dojox.socket");
-dojo.require("dojox.socket.Reconnect");
 
 function getCookie(name) {var r = document.cookie.match("\\b" + name + "=([^;]*)\\b"); return r ? r[1] : undefined;}
 Object.size = function(obj) { var size = 0, key; for (key in obj) { if (obj.hasOwnProperty(key)) size++; } return size; }
@@ -308,6 +306,7 @@ var channel = function(raw){
 var pipe = {
 	errorSleepTime: 500,
 	channels:{},
+	users:{},
 	chanStore:false,
 	_cTree:{},
 	urls:{},
@@ -330,7 +329,7 @@ var pipe = {
 		if(pipe.urls.home == 'undefined'){
 			pipe.urls.home = '/';
 		}
-		if(pipe.urls.auth && getCookie('user') == undefined){
+		if(pipe.urls.auth && !getCookie('user')){
 			pipe.redirect(pipe.urls.auth);
 		}
 		pipe.useWebsockets = ("WebSocket" in window && pipe.urls.socket) ? true : false;
@@ -391,7 +390,6 @@ var pipe = {
 		pipe.inRetry = false;
 	},
 	refreshCurrentChannels:function(){
-		console.info('in pipe.refreshCurrentChannels');
 		var paths = '';
 		for(var i in pipe.channels){
 			if(pipe.channels[i].subscribed){
@@ -465,6 +463,11 @@ var pipe = {
 		}else if(data.channels){
 			pipe._addChannelList(data);
 			return true;
+		}else if(data.user){
+			pipe.users[data.user.raw.uid] = data.user;
+			if (data.user.uid == pipe.session_id){
+				pipe.me = data.user;
+			}
         }else{
         	return false;
         }
@@ -483,6 +486,8 @@ var pipe = {
 			case 'getChannelList':
 				pipe.getChannelList();
 			case 'noop':
+				break;
+			case 'pong':
 				break;
 		}
 		return true;
@@ -504,53 +509,59 @@ _pipe_mixins = {
 					var func = function(){pipe._socket.send(dojo.toJson(args))};
 					pipe.connect(func);
 				}else{
-					pipe._socket.send(dojo.toJson(args));
+					if(pipe._socket.readyState == pipe._socket.OPEN){
+						pipe._socket.send(dojo.toJson(args));
+					}
 				}
 			},
 			connect:function(callback){
 				if(typeof callback != 'object'){delete callback;}
-				if(pipe._socket == false){
-					var args = {'url':pipe.urls.socket+'/'+pipe.session_id};
-					pipe._socket = dojox.socket(args);
-					pipe._socket = dojox.socket.Reconnect(pipe._socket,{reconnectTime:pipe.errorSleepTime,backoffRate:2});
-					pipe._socket.on("message", function(event){
-						var response = event.data;
-						if(response == ""){pipe.onError(response); return false;}
-						var _re = dojo.fromJson(response);
-						if(isDebug){console.dir(_re);}
-						if( pipe.receive(_re) ){
-							pipe.onSuccess(_re);
-						}else{
-							pipe.errorMessage(_re);
-						}
-					});
-					pipe._socket.on("error", pipe.onTimeout);
-					if(callback){
-						pipe._socket.on('open',function(event){callback()});
-					}else if(pipe.inRetry){
-						pipe.regainConnetion();
-						pipe.refreshCurrentChannels();
-					}
-				}else if(pipe._socket.readyState == pipe._socket.CLOSED){
-					pipe._socket.reconnect();
+				if(pipe._socket == false || pipe._socket.readyState == pipe._socket.CLOSED){
+					pipe._socket = new WebSocket('ws://'+window.location.host+pipe.urls.socket+'/'+pipe.session_id);
+					pipe._socket.onopen = pipe.onOpen;
+					pipe._socket.onmessage = pipe.onMessage;
+					pipe._socket.onclose = pipe.onClose;
+					pipe._socket.onerror = pipe.onError;
 				}else{
 					if(callback){
 						callback();
 					}
 				}
 			},
+			onOpen:function(){
+				pipe.getChannelList();
+			},
+			onMessage:function(message){
+				var response = message.data;
+				if(response == ""){pipe.onError(response); return false;}
+				var _re = dojo.fromJson(response);
+				if(isDebug){console.dir(_re);}
+				if( pipe.receive(_re) ){
+					pipe.onSuccess(_re);
+				}else{
+					pipe.errorMessage(_re);
+				}
+			},
+			onClose:function(close){
+				
+			},
+			onError:function(error){
+				pipe.onTimeout();
+			},
 			onTimeout:function(){
 				pipe.close();
-				pipe._socket.on("open",pipe.refreshCurrentChannels);
 		    	if(!pipe.inRetry){
 		    		pipe.lostConnection();
 		    	}
-//				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
+				if(pipe.errorSleepTime < 120000){
+					pipe.errorSleepTime *= 2;
+				}
+				window.setTimeout(function(){pipe.connect();pipe.refreshCurrentChannels();}, pipe.errorSleepTime);
+				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
 			},
 			close:function(){
 				pipe._socket.close();
-				//pipe._socket = false;
-			}
+			},
 		},
 		'http':{
 			send:function(url, args, onSuccess, onError){
