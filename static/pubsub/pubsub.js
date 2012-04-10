@@ -408,6 +408,7 @@ var pipe = {
 	onSuccess:function(response){
     	if(pipe.inRetry){
     		pipe.regainConnetion();
+    		pipe.refreshCurrentChannels();
     	}
 		pipe._poll = false;
 		pipe.errorSleepTime = 2000;
@@ -515,7 +516,12 @@ _pipe_mixins = {
 				}
 			},
 			connect:function(callback){
-				if(typeof callback != 'object'){delete callback;}
+				if(pipe._socket.callbacks == undefined){
+					pipe._socket.callbacks = {};
+				}
+				if(typeof callback == 'object'){
+					pipe._socket.callbacks.push(callback);
+				}
 				if(pipe._socket == false || pipe._socket.readyState == pipe._socket.CLOSED){
 					pipe._socket = new WebSocket('ws://'+window.location.host+pipe.urls.socket+'/'+pipe.session_id);
 					pipe._socket.onopen = pipe.onOpen;
@@ -523,15 +529,23 @@ _pipe_mixins = {
 					pipe._socket.onclose = pipe.onClose;
 					pipe._socket.onerror = pipe.onError;
 				}else{
-					if(callback){
-						callback();
+					if(pipe._socket.callbacks){
+						for(var i in pipe._socket.callbacks){
+							pipe._socket.callbacks[i]();
+						}
 					}
 				}
 			},
 			onOpen:function(){
 				pipe.getChannelList();
+				for(var i in pipe._socket.callbacks){
+					pipe._socket.callbacks[i]();
+				}
+				pipe._socket.callbacks = {};
 			},
 			onMessage:function(message){
+				pipe._socket.lastTime = Math.round((new Date()).getTime() / 1000);
+				pipe.noopCheck();
 				var response = message.data;
 				if(response == ""){pipe.onError(response); return false;}
 				var _re = dojo.fromJson(response);
@@ -548,6 +562,10 @@ _pipe_mixins = {
 			onError:function(error){
 				pipe.onTimeout();
 			},
+			noopCheck:function(){
+				clearTimeout(pipe._socket.noopTimeout);
+				pipe._socket.noopTimeout = setTimeout(pipe.onTimeout,pipe.noopInterval);
+			},
 			onTimeout:function(){
 				pipe.close();
 		    	if(!pipe.inRetry){
@@ -556,7 +574,7 @@ _pipe_mixins = {
 				if(pipe.errorSleepTime < 120000){
 					pipe.errorSleepTime *= 2;
 				}
-				window.setTimeout(function(){pipe.connect();pipe.refreshCurrentChannels();}, pipe.errorSleepTime);
+				window.setTimeout(function(){pipe.connect(pipe.refreshCurrentChannels);}, pipe.errorSleepTime);
 				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
 			},
 			close:function(){
