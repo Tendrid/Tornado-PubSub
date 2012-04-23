@@ -306,6 +306,7 @@ var channel = function(raw){
 var pipe = {
 	errorSleepTime: 500,
 	channels:{},
+	_retryTimeout:[],
 	users:{},
 	chanStore:false,
 	_cTree:{},
@@ -510,7 +511,6 @@ _pipe_mixins = {
 					var func = function(){pipe._socket.send(dojo.toJson(args))};
 					pipe.connect(func);
 				}else{
-					console.log(args);
 					if(pipe._socket.readyState == pipe._socket.OPEN){
 						pipe._socket.send(dojo.toJson(args));
 					}
@@ -518,22 +518,23 @@ _pipe_mixins = {
 			},
 			connect:function(callback){
 				if(pipe._socket.callbacks == undefined){
-					pipe._socket.callbacks = {};
+					pipe._socket.callbacks = [];
 				}
 				if(typeof callback == 'object'){
 					pipe._socket.callbacks.push(callback);
 				}
-				if(pipe._socket == false || pipe._socket.readyState == pipe._socket.CLOSED){
+				if(pipe._socket == false || pipe._socket.readyState != pipe._socket.OPEN){
 					pipe._socket = new WebSocket('ws://'+window.location.host+pipe.urls.socket+'/'+pipe.session_id);
 					pipe._socket.onopen = pipe.onOpen;
 					pipe._socket.onmessage = pipe.onMessage;
 					pipe._socket.onclose = pipe.onClose;
-					pipe._socket.onerror = pipe.onError;
+					pipe._socket.onerror = pipe.onTimeout;
 				}else{
 					if(pipe._socket.callbacks){
 						for(var i in pipe._socket.callbacks){
 							pipe._socket.callbacks[i]();
 						}
+						pipe._socket.callbacks = [];
 					}
 				}
 			},
@@ -543,6 +544,10 @@ _pipe_mixins = {
 					pipe._socket.callbacks[i]();
 				}
 				pipe._socket.callbacks = {};
+				for (var i in pipe._retryTimeout){
+					clearTimeout(pipe._retryTimeout[i])
+				}
+				pipe._retryTimeout = [];
 			},
 			onMessage:function(message){
 				pipe._socket.lastTime = Math.round((new Date()).getTime() / 1000);
@@ -560,23 +565,23 @@ _pipe_mixins = {
 			onClose:function(close){
 				//pipe.onTimeout();
 			},
-			onError:function(error){
-				pipe.onTimeout();
-			},
-			noopCheck:function(){
-				clearTimeout(pipe._socket.noopTimeout);
-				pipe._socket.noopTimeout = setTimeout(pipe.onTimeout,pipe.noopInterval+10000);
-			},
-			onTimeout:function(){
-				pipe.close();
+			onTimeout:function(e){
+				if(pipe._socket.readyState == pipe._socket.OPEN){
+					pipe.close();
+				}
 		    	if(!pipe.inRetry){
 		    		pipe.lostConnection();
 		    	}
 				if(pipe.errorSleepTime < 120000){
 					pipe.errorSleepTime *= 2;
 				}
-				window.setTimeout(function(){console.log('retry...');pipe.connect(pipe.refreshCurrentChannels);}, pipe.errorSleepTime);
+				var _rt = window.setTimeout(function(){pipe.connect();}, pipe.errorSleepTime);
+				pipe._retryTimeout.push(_rt);
 				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
+			},
+			noopCheck:function(){
+				clearTimeout(pipe._socket.noopTimeout);
+				pipe._socket.noopTimeout = setTimeout(pipe.onTimeout,pipe.noopInterval);
 			},
 			close:function(){
 				pipe._socket.close();
