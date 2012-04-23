@@ -510,6 +510,7 @@ _pipe_mixins = {
 					var func = function(){pipe._socket.send(dojo.toJson(args))};
 					pipe.connect(func);
 				}else{
+					console.log(args);
 					if(pipe._socket.readyState == pipe._socket.OPEN){
 						pipe._socket.send(dojo.toJson(args));
 					}
@@ -557,14 +558,14 @@ _pipe_mixins = {
 				}
 			},
 			onClose:function(close){
-				
+				//pipe.onTimeout();
 			},
 			onError:function(error){
 				pipe.onTimeout();
 			},
 			noopCheck:function(){
 				clearTimeout(pipe._socket.noopTimeout);
-				pipe._socket.noopTimeout = setTimeout(pipe.onTimeout,pipe.noopInterval);
+				pipe._socket.noopTimeout = setTimeout(pipe.onTimeout,pipe.noopInterval+10000);
 			},
 			onTimeout:function(){
 				pipe.close();
@@ -574,7 +575,7 @@ _pipe_mixins = {
 				if(pipe.errorSleepTime < 120000){
 					pipe.errorSleepTime *= 2;
 				}
-				window.setTimeout(function(){pipe.connect(pipe.refreshCurrentChannels);}, pipe.errorSleepTime);
+				window.setTimeout(function(){console.log('retry...');pipe.connect(pipe.refreshCurrentChannels);}, pipe.errorSleepTime);
 				if(isDebug){ console.error("Connect error; sleeping for", pipe.errorSleepTime, "ms"); }
 			},
 			close:function(){

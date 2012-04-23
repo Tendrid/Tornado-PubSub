@@ -65,47 +65,6 @@ class PubSub(object):
         def func(cls,param):
             cls._setHistoryLimit(param)
         self.chan_set["historylimit"] = func
-
-    """BETA"""
-    def subscribe(self,channel,user):
-        try:
-            self.channels[channel].subscribe(user)
-        except KeyError:
-            return dict(error='invalid channel')
-    
-    """BETA"""
-    def getChannel(self,channel,default):
-        try:
-            return self.channels[channel]
-        except KeyError:
-            return None
-        
-    """
-    DEPRECATED
-    def getList(self,user):
-        for channel in user.channels:
-            messages = []
-            mlist = {}
-            c = self.channels[channel]
-            try:
-                cursor = user.history[channel]
-            except KeyError:
-                cursor = None
-            for item in c.history:
-                if cursor == item[0]:
-                    break
-                try:
-                    if not mlist[item[1]]:
-                        mlist[item[1]] = c.library[item[1]]
-                except KeyError:
-                    pass
-                    #mlist[item[1]] = c.library[item[1]]
-            for item in mlist:
-                messages.append(mlist[item])
-            if len(messages) > 0:
-                return messages
-        return {}
-    """
     
     """Loaders"""
     def preLoadData(self,collection_id,announce = False):
@@ -146,7 +105,6 @@ class PubSub(object):
         ci = ChannelItem(raw)
         ci.update()
         return ci.toObj()
-
 
 class Channel():
 
