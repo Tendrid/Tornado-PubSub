@@ -3,6 +3,7 @@ from engine import PubSub, User
 import time
 import datetime
 import tornado.escape
+from hashlib import md5
 
 class Base(object):
     _psi = None
@@ -61,12 +62,13 @@ class Base(object):
                 withMeta = data['withMeta']
             except KeyError:
                 withMeta = False
+            retVal = []
             for chan in channels:
                 if cmd == 'subscribe':
-                    user.subscribe(chan,withMeta)
+                    retVal.append(user.subscribe(chan,withMeta))
                 else:
-                    user.unsubscribe(chan)
-            self.out(dict(ok="{0} ok".format(cmd)))
+                    retVal.append(user.unsubscribe(chan))
+            self.out(dict(type=cmd,response=retVal))
         except KeyError:
             self.out(dict(error='invalid channel'))
 
@@ -78,14 +80,25 @@ class Base(object):
 
     def _r_gui(self,data,user):
         try:
-            _u = self.pubSubInstance.users[data['session_id']]
-            if _u == user:
-                self.out(dict(user=user.toDict(False)))
-            else:
-                self.out(dict(user=_u.toDict()))
-                
+            ids = data['ids'].split(',')
         except KeyError:
-            self.out(dict(error='invalid user'))
+            ids = []
+        if ids == [''] or ids == []:
+            ids = [self.pubSubInstance.users[data['session_id']].pid]
+        try:
+            retVal = []
+            for i in ids:
+                try:
+                    _u = self.pubSubInstance.userByPid(i)
+                    if user in _u:
+                        retVal.append(user.toDict(False))
+                    else:
+                        retVal.append(_u[0].toDict())
+                except KeyError:
+                    retVal.append(dict(error='invalid user'))      
+            self.out(dict(type='users',response=retVal))
+        except KeyError:
+            self.out([dict(error='invalid user')])
 
     def _r_ping(self,data,user):
         self.out(dict(cmd='pong'))
@@ -114,15 +127,19 @@ class Base(object):
         user_json = self.get_secure_cookie("user")
         if not user_json: return None
         u = tornado.escape.json_decode(user_json)
-#        if not session_id:
-#            session_id = u['sid']
+        m = md5()
+        m.update(user_json)
+        u['pid'] = m.hexdigest()
         try:
             return self.pubSubInstance.users[session_id]
         except (TypeError, KeyError):
             try:
                 if session_id:
-                    self.pubSubInstance.users[session_id] = User(u,session_id)
-                    return self.pubSubInstance.users[session_id]
+                    _user = self.pubSubInstance.addUser(User(u,session_id))
+                    return _user
+#                    self.pubSubInstance.users[session_id] = _user
+#                    self.pubSubInstance._user_pid_map[_user.pid] = _user.uid
+#                    return self.pubSubInstance.users[session_id]
                 else:
                     return User(u)
             except KeyError:

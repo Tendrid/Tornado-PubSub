@@ -477,14 +477,41 @@ var pipe = {
 		}else if(data.channels){
 			pipe._addChannelList(data);
 			return true;
-		}else if(data.user){
-			pipe.users[data.user.raw.uid] = data.user;
-			if (data.user.uid == pipe.session_id){
-				pipe.me = data.user;
-			}
+		}else if(data.response){
+			pipe.response(data);
         }else{
         	return false;
         }
+	},
+	response:function(d){
+		if(isDebug){console.log('RESPONSE: ',d.type)};
+		switch(d.type){
+			case 'subscribe':
+				for(var i in d.response){
+					pipe.channels[d.response[i].path].description = d.response[i].description;
+					pipe.channels[d.response[i].path].name = d.response[i].name;
+					pipe.channels[d.response[i].path].users = d.response[i].users;
+					var getUsers = [];
+					for(var u in d.response[i].users){
+						if(!pipe.users[d.response[i].users[u]]){
+							getUsers.push(d.response[i].users[u]);
+						}
+					}
+					if(getUsers.length != 0){
+						pipe.send(pipe.urls.cmd,{"cmd":"getUserInfo","ids":getUsers.join()});
+					}
+				}
+				break;
+			case 'unsubscribe':
+				break;
+			case 'users':
+				for(var i in d.response){
+					pipe.users[d.response[i].pid] = d.response[i]
+					if (d.response[i].uid && d.response[i].uid == pipe.session_id){
+						pipe.me = d.response[i];
+					}
+				}
+		}
 	},
 	cmd:function(message, cmd){
 		if(isDebug){console.log('COMMAND: ',cmd)};

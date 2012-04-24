@@ -13,6 +13,7 @@ class PubSub(object):
     _gate = {}
     _collections = {}
     users = {}
+    _user_pid_map = {}
     _engines = {}
     _rl = 0
 
@@ -93,6 +94,29 @@ class PubSub(object):
     
     def killUser(self,uid):
         del self.users[uid]
+    def addUser(self,user):
+        self.users[user.uid] = user
+        try:
+            self._user_pid_map[user.pid].append(user.uid)
+        except KeyError:
+            self._user_pid_map[user.pid] = [user.uid]
+        return user
+    def userByPid(self,pid):
+        try:
+            sid = self._user_pid_map[pid]
+        except:
+            #unkown user
+            return []
+        try:
+            users = []
+            for u in sid:
+                users.append(self.users[u])
+            return users
+        except:
+            #known map, but user is gone
+            del self._user_pid_map[pid]
+            return []
+        
     
     def createChannelItem(self,raw,channels,collection_id):
         raw['channels'] = channels
@@ -198,7 +222,7 @@ class Channel():
     def toDict(self):
         u = []
         for sid, user in self.subscribers.items():
-            u.append(user.toDict())
+            u.append(user.pid)
         return {'id':self.id,'path':self.path,'name':self.name,'description':self.description, 'users':u}
     
     def updateItem(self,raw,collection_id,announce=True):
@@ -289,7 +313,11 @@ class User():
             except KeyError:
                 logging.warning("uid missing in user init")
                 self.uid = str(uuid.uuid4())
-        self.pubid = str(uuid.uuid4())
+        try:
+            self.pid = raw['pid']
+        except KeyError:
+            logging.warning("pid missing in user init")
+            self.pid = str(uuid.uuid4())
         self.raw = raw
         self.reset()
         self.times = {"lastPublished":0,"login":int(time.mktime(datetime.datetime.now().timetuple())),"lastUpdated" : int(time.mktime(datetime.datetime.now().timetuple()))}
@@ -329,15 +357,18 @@ class User():
             hist = PubSub.channels[channel].subscribe(self,withMeta)
             if channel not in self.channels:
                 self.channels.append(channel)
+            if withMeta:
+                return PubSub.channels[channel].toDict()
+            else:
+                return dict(ok="subscribe ok")
         except KeyError:
-            #TODO: bubble up these errors
-            return dict(error='invalid channel')
+            return dict(error='invalid channel: {0}'.format(channel))
     def unsubscribe(self,channel):
         try:
             debug( self.uid +' just unsubscribed to '+channel)
             PubSub.channels[channel].unsubscribe(self)
+            return dict(ok="unsubscribe ok")
         except KeyError:
-            #TODO: bubble up these errors
             return dict(error='invalid channel')
     def getChannelCursor(self,channel):
         try:
@@ -393,9 +424,9 @@ class User():
     def toDict(self,public=True):
         cb = 1 if self.callback else 0
         if public:
-            return {'pubic':self.pubid,'times':self.times,'channels':self.channels,'raw':self.raw}
+            return {'pid':self.pid,'times':self.times,'channels':self.channels,'raw':self.raw}
         else:
-            return {'pubic':self.pubid,'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels,'raw':self.raw}
+            return {'pid':self.pid,'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels,'raw':self.raw}
 
 def debug(v):
     print v
