@@ -2,7 +2,7 @@
  * pubsub.js
  */
 // show debug info in console
-var isDebug = false;
+var isDebug = true;
 dojo.require("dojox.encoding.digests.MD5");
 dojo.require("dojo.io.script");
 dojo.require("dojo.store.Memory");
@@ -202,6 +202,7 @@ var channel = function(raw){
 	this.path = raw['path'];
 	this.description = raw['description'];
 	this.subscribed = false;
+	this.withMeta = false;
 	this._callbacks = {};
 	this.library = new dojo.store.Memory();
 	this._handle = false;
@@ -257,15 +258,15 @@ var channel = function(raw){
 			dojo.publish(this.path, [data]);
 		}
 	},
-	this._sub = function(sub, announce){
-		this.subscribed = sub;
-		if(sub){
+	this._sub = function(args){
+		this.subscribed = args.sub;
+		if(args.sub){
 			this._handle = dojo.subscribe(this.id, function(data){ /*console.log(data)*/ });
 		}else{
 			dojo.unsubscribe(this._handle);
 		}
-		if(announce){
-			this._sendSubReq(sub);			
+		if(args.announce){
+			this._sendSubReq(args);
 		}
 		items = this.library.query();
 		for (var ind in items){
@@ -276,26 +277,33 @@ var channel = function(raw){
 		// pass in announce, check if we need to reach out and request
 		// or if it has been assigned from a page load
 	}
-	this.subscribe = function(announce){
+	this.subscribe = function(args){
+		if(typeof args != 'object'){args = {};}
 		this._fire_hook(PUBSUB.EVENTS.SUBSCRIBE, PUBSUB.STATE.PRE, this);
 		if(!this.subscribed){
-			if(announce == undefined){announce = true;}
-			this._sub(true,announce);
+			if(!args.announce){args.announce = true;}
+			args.sub = true;
+			this._sub(args);
 		}
 		this._fire_hook(PUBSUB.EVENTS.SUBSCRIBE, PUBSUB.STATE.POST, this);
 	}
-	this.unsubscribe = function(announce){
+	this.unsubscribe = function(args){
+		if(typeof args != 'object'){args = {};}
 		this._fire_hook(PUBSUB.EVENTS.UNSUBSCRIBE, PUBSUB.STATE.PRE, this);
 		if(this.subscribed){
-			if(announce == undefined){announce = true;}
-			this._sub(false,announce);
+			if(!args.announce){args.announce = true;}
+			args.sub = false;
+			this._sub(args);
 		}
 		this._fire_hook(PUBSUB.EVENTS.UNSUBSCRIBE, PUBSUB.STATE.POST, this);
 	}
-	this._sendSubReq = function(sub){
+	this._sendSubReq = function(args){
 		//subUrl = (sub) ? pipe.urls.subscribe : pipe.urls.unsubscribe;
-		cmd = (sub) ? 'subscribe' : 'unsubscribe';
-	    pipe.send(pipe.urls.send, {'channel':this.path,'cmd':cmd}, function(response) {
+		cmd = (args.sub) ? 'subscribe' : 'unsubscribe';
+		var sendArgs = {channel:this.path,cmd:cmd};
+		sendArgs.withMeta = (args.withMeta) ? true : false;
+		this.withMeta = sendArgs.withMeta;
+	    pipe.send(pipe.urls.send, sendArgs, function(response) {
 	    	if(response['error']){
 	    		console.error('error: '+response['error']);
 	    	}
@@ -308,7 +316,6 @@ var pipe = {
 	channels:{},
 	_retryTimeout:[],
 	users:{},
-	chanStore:false,
 	_cTree:{},
 	urls:{},
 	_poll:false,
@@ -391,20 +398,25 @@ var pipe = {
 		pipe.inRetry = false;
 	},
 	refreshCurrentChannels:function(){
-		var paths = '';
+		if(isDebug){ console.info("resubscribing to channels"); }
+		var paths = [];
+		paths[false] = '';	//noMeta
+		paths[true] = '';	//withMeta
 		for(var i in pipe.channels){
 			if(pipe.channels[i].subscribed){
-				if(paths != ''){paths+=',';}
-				paths += pipe.channels[i].path;
+				if(paths[pipe.channels[i].withMeta] != ''){paths[pipe.channels[i].withMeta]+=',';}
+				paths[pipe.channels[i].withMeta] += pipe.channels[i].path;
 			}
 		}
-		if(paths != ''){
-			pipe.send(pipe.urls.send, {'channel':paths,'cmd':'subscribe'}, function(response) {
-		    	if(response['error']){
-		    		console.error('error: '+response['error']);
-		    	}
-		    });
-		}		
+		for(var i in paths){
+			if(paths[i] != ''){
+				pipe.send(pipe.urls.send, {'channel':paths[i],'cmd':'subscribe','withMeta':i}, function(response) {
+			    	if(response['error']){
+			    		console.error('error: '+response['error']);
+			    	}
+			    });
+			}
+		}
 	},
 	onSuccess:function(response){
     	if(pipe.inRetry){

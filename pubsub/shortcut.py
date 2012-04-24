@@ -57,9 +57,13 @@ class Base(object):
         try:
             cmd = data['cmd']
             channels = data['channel'].split(',')
+            try:
+                withMeta = data['withMeta']
+            except KeyError:
+                withMeta = False
             for chan in channels:
                 if cmd == 'subscribe':
-                    user.subscribe(chan)
+                    user.subscribe(chan,withMeta)
                 else:
                     user.unsubscribe(chan)
             self.out(dict(ok="{0} ok".format(cmd)))
@@ -76,9 +80,8 @@ class Base(object):
         try:
             _u = self.pubSubInstance.users[data['session_id']]
             if _u == user:
-                self.out(dict(user=user.toDict()))
+                self.out(dict(user=user.toDict(False)))
             else:
-                # TODO: limit the data here unless privliaged
                 self.out(dict(user=_u.toDict()))
                 
         except KeyError:

@@ -110,6 +110,7 @@ class Channel():
 
     def __init__(self, raw):
         self.subscribers = {}
+        self.metaSubscribers = {}
         self.history = []
         self.library = {}
         self.history_limit = None
@@ -164,15 +165,24 @@ class Channel():
                 except KeyError:
                     pass
 
-    def subscribe(self, user):
+    def subscribe(self, user, withMeta=False):
         self.subscribers[user.id()] = user
+        if withMeta:
+            self.metaSubscribers[user.id()] = user
         user.loadChannel(self.path)
         try:
             return self.history[0]
         except IndexError:
             return None
     def unsubscribe(self, user):
-        del self.subscribers[user.id()]
+        try:
+            del self.subscribers[user.id()]
+        except KeyError:
+            pass
+        try:
+            del self.metaSubscribers[user.id()]
+        except KeyError:
+            pass
         
     def publish(self, ChannelItem):
         self.library[ChannelItem.id] = ChannelItem
@@ -186,7 +196,10 @@ class Channel():
         self.history.insert(0,[str(uuid.uuid4()), ci.id])
         self.cleanHistory()
     def toDict(self):
-        return {'id':self.id,'path':self.path,'name':self.name,'description':self.description}
+        u = []
+        for sid, user in self.subscribers.items():
+            u.append(user.toDict())
+        return {'id':self.id,'path':self.path,'name':self.name,'description':self.description, 'users':u}
     
     def updateItem(self,raw,collection_id,announce=True):
         try:
@@ -268,14 +281,15 @@ class ChannelItem():
 
 class User():
     def __init__(self, raw, uid=None):
-        if id:
+        if uid:
             self.uid = uid
         else:
             try:
                 self.uid = raw['uid']
             except KeyError:
                 logging.warning("uid missing in user init")
-                self.uid = uuid.uuid4()
+                self.uid = str(uuid.uuid4())
+        self.pubid = str(uuid.uuid4())
         self.raw = raw
         self.reset()
         self.times = {"lastPublished":0,"login":int(time.mktime(datetime.datetime.now().timetuple())),"lastUpdated" : int(time.mktime(datetime.datetime.now().timetuple()))}
@@ -309,10 +323,10 @@ class User():
             self.times['lastUpdated'] = dt
             return out
         """
-    def subscribe(self,channel):
+    def subscribe(self,channel,withMeta=False):
         try:
-            debug( '{0} just subscribed to {1}'.format(self.uid,channel))
-            hist = PubSub.channels[channel].subscribe(self)
+            debug( '{0} just subscribed to {1} (withMeta: {2})'.format(self.uid,channel,str(withMeta)))
+            hist = PubSub.channels[channel].subscribe(self,withMeta)
             if channel not in self.channels:
                 self.channels.append(channel)
         except KeyError:
@@ -376,9 +390,12 @@ class User():
         self.history = {}
         self.channels = []
         self.queue = []
-    def toDict(self):
+    def toDict(self,public=True):
         cb = 1 if self.callback else 0
-        return {'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels,'raw':self.raw}
+        if public:
+            return {'pubic':self.pubid,'times':self.times,'channels':self.channels,'raw':self.raw}
+        else:
+            return {'pubic':self.pubid,'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels,'raw':self.raw}
 
 def debug(v):
     print v
