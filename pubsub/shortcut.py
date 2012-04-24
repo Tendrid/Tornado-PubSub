@@ -127,9 +127,12 @@ class Base(object):
         user_json = self.get_secure_cookie("user")
         if not user_json: return None
         u = tornado.escape.json_decode(user_json)
-        m = md5()
-        m.update(user_json)
-        u['pid'] = m.hexdigest()
+        try:
+            u['pid'] = u['uid']
+        except KeyError:
+            m = md5()
+            m.update(user_json)
+            u['pid'] = m.hexdigest()
         try:
             return self.pubSubInstance.users[session_id]
         except (TypeError, KeyError):
@@ -137,9 +140,6 @@ class Base(object):
                 if session_id:
                     _user = self.pubSubInstance.addUser(User(u,session_id))
                     return _user
-#                    self.pubSubInstance.users[session_id] = _user
-#                    self.pubSubInstance._user_pid_map[_user.pid] = _user.uid
-#                    return self.pubSubInstance.users[session_id]
                 else:
                     return User(u)
             except KeyError:
