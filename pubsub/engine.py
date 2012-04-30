@@ -93,6 +93,7 @@ class PubSub(object):
         return self.channels
     
     def killUser(self,uid):
+        self.users[uid].destroy()
         del self.users[uid]
     def addUser(self,user):
         self.users[user.uid] = user
@@ -133,8 +134,8 @@ class PubSub(object):
 class Channel():
 
     def __init__(self, raw):
-        self.subscribers = {}
-        self.metaSubscribers = {}
+        self.subscribers = []
+        self.metaSubscribers = []
         self.history = []
         self.library = {}
         self.history_limit = None
@@ -189,10 +190,32 @@ class Channel():
                 except KeyError:
                     pass
 
+    def _getMetaUserList(self):
+        u = []
+        #REMIX
+        #for sid, user in self.subscribers.items():
+        for sid in self.subscribers:
+            u.append(PubSub.users[sid].pid)
+        return u
+    def setName(self,name):
+        self.name = name
+        self.sendMeta({'channel':self.path,'meta':{'name':name}})
+    def setDescription(self,description):
+        self.description = description
+        self.sendMeta({'channel':self.path,'meta':{'description':description}})
+    def sendMeta(self,msg):
+        for u in self.metaSubscribers:
+            PubSub.users[u].send(msg,'meta')
     def subscribe(self, user, withMeta=False):
-        self.subscribers[user.id()] = user
+        ul = self._getMetaUserList()
+        #self.subscribers[user.id()] = user
+        #REMIX
+        if user.id() not in self.subscribers:
+            self.subscribers.append(user.id())
+        if user.pid not in ul:
+            self.sendMeta({'channel':self.path,'meta':{'users':self._getMetaUserList()}})
         if withMeta:
-            self.metaSubscribers[user.id()] = user
+            self.metaSubscribers.append(user.id())
         user.loadChannel(self.path)
         try:
             return self.history[0]
@@ -200,29 +223,41 @@ class Channel():
             return None
     def unsubscribe(self, user):
         try:
-            del self.subscribers[user.id()]
+            #del self.subscribers[user.id()]
+            #REMIX
+            self.subscribers.remove(user.id())
         except KeyError:
             pass
         try:
-            del self.metaSubscribers[user.id()]
+            #del self.metaSubscribers[user.id()]
+            #REMIX
+            self.metaSubscribers.remove(user.id())
         except KeyError:
             pass
+        if user.pid not in self._getMetaUserList():
+            self.sendMeta({'channel':self.path,'meta':{'users':self._getMetaUserList()}})
         
     def publish(self, ChannelItem):
         self.library[ChannelItem.id] = ChannelItem
         self.addToHistory(ChannelItem)
         
-        users = self.subscribers.values()
+        #users = self.subscribers.values()
+        #REMIX
+        users = self.subscribers
         for user in users:
-            user.getUpdate(self.path)
+            PubSub.users[user].getUpdate(self.path)
         return users
     def addToHistory(self, ci):
         self.history.insert(0,[str(uuid.uuid4()), ci.id])
         self.cleanHistory()
     def toDict(self):
         u = []
-        for sid, user in self.subscribers.items():
-            u.append(user.pid)
+
+        #REMIX
+        #self.subscribers
+        #for sid, user in self.subscribers.items():
+        for user in self.subscribers:
+            u.append(PubSub.users[user].pid)
         return {'id':self.id,'path':self.path,'name':self.name,'description':self.description, 'users':u}
     
     def updateItem(self,raw,collection_id,announce=True):
@@ -258,15 +293,16 @@ class ChannelItem():
         if announce:
             self.publish()
     def publish(self):
-        users = {}
+        users = []
         #loop through all channels
         for chan in self.channels:
             #get a list of users subscribed to channel
-            for user in PubSub.channels[chan].publish(self):
-                users[user.id] = user
+            for user_id in PubSub.channels[chan].publish(self):
+                #users[user_id] = PubSub.users[user_id]
+                users.append(user_id)
         #loop through users, execute queues
-        for user in users.values():
-            user.runQueue()
+        for user_id in users:
+            PubSub.users[user_id].runQueue()
 
     def getFromDB(self):
         rows = self.collection.db.getChannelItem(self.collection.loc,self._id)
@@ -305,6 +341,7 @@ class ChannelItem():
 
 class User():
     def __init__(self, raw, uid=None):
+        self._buffer = []
         if uid:
             self.uid = uid
         else:
@@ -325,6 +362,10 @@ class User():
         if self.callback:
             self.noop()
         self.callback = callback  
+        if self._buffer != []:
+            b = self._buffer
+            self._buffer = []
+            self.send(b,'bufferFlush')
     def id(self):
         return self.uid
     def getTimes(self):
@@ -336,6 +377,8 @@ class User():
         if self.callback:
             reset = self.callback(msg,cmd,self)
             self.times['lastUpdated'] = int(time.mktime(datetime.datetime.now().timetuple()))
+        else:
+            self._buffer.append(dict(msg=msg,cmd=cmd))
         if reset:
             self.callback = None
     def noop(self):
@@ -402,11 +445,7 @@ class User():
         if self.queue != [] and self.callback:
             messages = self.queue
             self.queue = []
-#            callback = self.callback
-#            self.callback = None
-#            callback(sorted(messages, key=lambda id: id))
             self.send(sorted(messages, key=lambda id: id))
-#            self.times["lastUpdated"] = int(time.mktime(datetime.datetime.now().timetuple()))
     def loadChannel(self,channel):
         messages = self.getUpdate(channel)
         self.runQueue()
@@ -427,6 +466,18 @@ class User():
             return {'pid':self.pid,'times':self.times,'channels':self.channels,'raw':self.raw}
         else:
             return {'pid':self.pid,'uid':self.uid,'history':self.history,'callback':cb,'times':self.times,'channels':self.channels,'raw':self.raw}
+    def destroy(self):
+        for chan in self.channels:
+            c = PubSub.channels[chan]
+            print '=======================================>'
+            print c.subscribers
+            print self.uid
+            print '<======================================='
+            c.subscribers.remove(self.uid)
+            c.metaSubscribers.remove(self.uid)
+            cl = c._getMetaUserList()
+            if self.pid not in cl:
+                c.sendMeta({'channel':c.path,'meta':{'users':cl}})
 
 def debug(v):
     print v

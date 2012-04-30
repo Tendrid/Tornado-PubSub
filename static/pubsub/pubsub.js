@@ -2,7 +2,7 @@
  * pubsub.js
  */
 // show debug info in console
-var isDebug = true;
+var isDebug = false;
 dojo.require("dojox.encoding.digests.MD5");
 dojo.require("dojo.io.script");
 dojo.require("dojo.store.Memory");
@@ -25,10 +25,11 @@ Object.size = function(obj) { var size = 0, key; for (key in obj) { if (obj.hasO
  */
 
 var PUBSUB = {
-		EVENTS:{'SUBSCRIBE':0,'UNSUBSCRIBE':1,'PUBLISH':2,'UNPUBLISH':4},
+		EVENTS:{'SUBSCRIBE':0,'UNSUBSCRIBE':1,'PUBLISH':2,'UNPUBLISH':4,'META_UPDATE':8},
+		CALLBACKS:{'ANY':63,'META':1,'CHANNEL':2,'CHANNEL_ITEM':4,'USER':8,'SUBSCRIBE':16,'UNSUBSCRIBE':32},
 		STATE:{'PRE':0,'POST':1},
-		ERR_MESSAGE:{'CLEAR':0,'MISC_ERROR':1,'CONNECTION_FAILED':2,'REDPILL':4},
-		SYS_MESSAGE:{'CLEAR':0,'MISC_ERROR_RECOVER':1,'CONNECTION_RESTORED':2,'BLUEPILL':4}
+		ERR_MESSAGE:{'CLEAR':0,'MISC_ERROR':1,'CONNECTION_FAILED':2,'INVALID_META':4},
+		SYS_MESSAGE:{'CLEAR':0,'MISC_ERROR_RECOVER':1,'CONNECTION_RESTORED':2,'INVALID_META_CLEARED':4}
 	}
 
 /***
@@ -57,7 +58,7 @@ var apps = {
 		}
 		var chan = apps._match(channels);
 		for(var ind in chan){
-			this._subs.push(dojo.subscribe(chan[ind].path, _cb));
+			this._subs.push(dojo.subscribe('pubsub/'+chan[ind].path, _cb));
 			this.channels[chan[ind].path] = chan[ind];
 		}
 	},
@@ -203,6 +204,7 @@ var channel = function(raw){
 	this.description = raw['description'];
 	this.subscribed = false;
 	this.withMeta = false;
+	this.metaSubscribers = [];
 	this._callbacks = {};
 	this.library = new dojo.store.Memory();
 	this._handle = false;
@@ -210,7 +212,8 @@ var channel = function(raw){
 	this._hooks = { 0 : [{},{}],
 					1: [{},{}],
 					2: [{},{}],
-					4: [{},{}] };
+					4: [{},{}],
+					8: [{},{}]};
 	this._fire_hook = function(event,state,arg,clear){
 		var reset = false;
 		for(e in this._hooks[event][state]){
@@ -253,15 +256,50 @@ var channel = function(raw){
 		if(announce){
 			pipe.send(pipe.urls.send, data);
 			authToPub = false;
-		}
+		}//TODO: why dont i use else{ ???
 		if(authToPub){
-			dojo.publish(this.path, [data]);
+			dojo.publish('pubsub/'+this.path, [data]);
+		}
+	},
+	this.publishMeta = function(data){
+		// fire pre meta hook
+		this._fire_hook(PUBSUB.EVENTS.META_UPDATE, PUBSUB.STATE.PRE, this);
+		if(data.users){
+			var post = false;
+			this.metaSubscribers = data.users
+			var getUsers = [];
+			for(var u in this.metaSubscribers){
+				if(!pipe.users[this.metaSubscribers[u]]){
+					getUsers.push(this.metaSubscribers[u]);
+				}
+			}
+			if(getUsers.length != 0){
+				var _c = this;
+				pipe.send(	pipe.urls.cmd,
+							{"cmd":"getUserInfo","ids":getUsers.join()},
+							{onLoad:function(b){_c._fire_hook(PUBSUB.EVENTS.META_UPDATE, PUBSUB.STATE.POST, _c);},type:PUBSUB.CALLBACKS.USER});
+			}else{
+				var post = true;				
+			}
+		}else if(data.name){
+			this.name = data.name;
+			var post = true;
+		}else if(data.description){
+			this.description = data.description;
+			var post = true;
+		}
+		if(post){
+			// fire post meta hook
+			this._fire_hook(PUBSUB.EVENTS.META_UPDATE, PUBSUB.STATE.POST, this);
+		}else{
+			//apps.onError(PUBSUB.ERR_MESSAGE.INVALID_META);
+			//fire error message
 		}
 	},
 	this._sub = function(args){
 		this.subscribed = args.sub;
 		if(args.sub){
-			this._handle = dojo.subscribe(this.id, function(data){ /*console.log(data)*/ });
+			this._handle = dojo.subscribe('pubsub/'+this.id, function(data){ /*console.log(data)*/ });
 		}else{
 			dojo.unsubscribe(this._handle);
 		}
@@ -303,11 +341,10 @@ var channel = function(raw){
 		var sendArgs = {channel:this.path,cmd:cmd};
 		sendArgs.withMeta = (args.withMeta) ? true : false;
 		this.withMeta = sendArgs.withMeta;
-	    pipe.send(pipe.urls.send, sendArgs, function(response) {
-	    	if(response['error']){
-	    		console.error('error: '+response['error']);
-	    	}
-	    });
+	    pipe.send(	pipe.urls.send,
+	    			sendArgs,
+	    			{onLoad:function(response) {if(response['error']){console.error('error: '+response['error']);}},type:PUBSUB.CALLBACKS.SUBSCRIBE|PUBSUB.CALLBACKS.UNSUBSCRIBE}
+	    );
 	}
 }
 
@@ -320,6 +357,7 @@ var pipe = {
 	urls:{},
 	_poll:false,
 	_socket:false,
+	callbacks:[],
 	active:false,
 	connectOnReady:false,
 	inRetry:false,
@@ -329,6 +367,11 @@ var pipe = {
 	session_id:dojox.encoding.digests.MD5(getCookie('user') + Math.round((new Date()).getTime()),dojox.encoding.digests.outputTypes.Hex),
 	init:function(params,onReady){
 		pipe.rl=1;
+		var i = PUBSUB.CALLBACKS.ANY+1;
+		while(i--){
+			pipe.callbacks[i] = [];
+		}
+		
 		pipe.onReady = (onReady) ? onReady : function(){};
 		if(params['urls'] == undefined){
 			console.error('missing required params in pipe');
@@ -361,14 +404,16 @@ var pipe = {
 			}
 			pipe._postInit(pipe.onReady);
 		}else{
-			pipe.send(pipe.urls.send, {'cmd':'getChannelList'}, function(item){
-				pipe._addChannelList(item);
+			pipe.send(pipe.urls.send, {'cmd':'getChannelList'},{
+				onLoad:function(item){pipe._addChannelList(item);},
+				type:PUBSUB.CALLBACKS.CHANNEL
 			});
 		}
 	},
 	getChannelList:function(){
-		pipe.send(pipe.urls.send, {'cmd':'getChannelList'}, function(item){
-			pipe._addChannelList(item);
+		pipe.send(pipe.urls.send, {'cmd':'getChannelList'},{
+			onLoad:function(item){pipe._addChannelList(item);},
+			type:PUBSUB.CALLBACKS.CHANNEL
 		});
 	},
 	_addChannelList:function(list){
@@ -410,10 +455,9 @@ var pipe = {
 		}
 		for(var i in paths){
 			if(paths[i] != ''){
-				pipe.send(pipe.urls.send, {'channel':paths[i],'cmd':'subscribe','withMeta':i}, function(response) {
-			    	if(response['error']){
-			    		console.error('error: '+response['error']);
-			    	}
+				pipe.send(pipe.urls.send, {'channel':paths[i],'cmd':'subscribe','withMeta':i}, {
+					onLoad:function(response){if(response['error']){console.error('error: '+response['error']);}},
+					type:PUBSUB.CALLBACKS.SUBSCRIBE|PUBSUB.CALLBACKS.UNSUBSCRIBE
 			    });
 			}
 		}
@@ -452,6 +496,9 @@ var pipe = {
 			cTree = cTree[tree[i]];
 		}
 		this.channels[raw['path']].tree = _tr;
+		if(raw['users']){
+			this.channels[raw['path']].publishMeta({users:raw['users']})
+		}
 	},
 	subscribed:function(){
 		var r = [];
@@ -463,6 +510,7 @@ var pipe = {
 		return r;
 	},
 	receive:function(data){
+		//pipe._runCallbacks(data);
 		if(data.cmd){
 			return this.cmd(data.messages, data.cmd);
 		}else if(data.messages){
@@ -471,11 +519,18 @@ var pipe = {
         			this.channels[data.messages[message].channels[chan]].publish(data.messages[message], false);
         		}
         	}
+			pipe.runCallback(PUBSUB.CALLBACKS.CHANNEL_ITEM,data);
             return true;
 		}else if(data.ok){
 			return true;
+		}else if(data.meta){
+			if(data.meta.channel){
+				pipe.channels[data.meta.channel].publishMeta(data.meta.meta);
+				pipe.runCallback(PUBSUB.CALLBACKS.META,data.meta.meta);
+			}
 		}else if(data.channels){
 			pipe._addChannelList(data);
+			pipe.runCallback(PUBSUB.CALLBACKS.CHANNEL,data);			
 			return true;
 		}else if(data.response){
 			pipe.response(data);
@@ -490,7 +545,7 @@ var pipe = {
 				for(var i in d.response){
 					pipe.channels[d.response[i].path].description = d.response[i].description;
 					pipe.channels[d.response[i].path].name = d.response[i].name;
-					pipe.channels[d.response[i].path].users = d.response[i].users;
+					pipe.channels[d.response[i].path].metaSubscribers = d.response[i].users;
 					var getUsers = [];
 					for(var u in d.response[i].users){
 						if(!pipe.users[d.response[i].users[u]]){
@@ -498,11 +553,18 @@ var pipe = {
 						}
 					}
 					if(getUsers.length != 0){
-						pipe.send(pipe.urls.cmd,{"cmd":"getUserInfo","ids":getUsers.join()});
+						var _c = pipe.channels[d.response[i].path];
+						pipe.send(	pipe.urls.cmd,
+									{"cmd":"getUserInfo","ids":getUsers.join()},
+									{onLoad:function(b){_c._fire_hook(PUBSUB.EVENTS.META_UPDATE, PUBSUB.STATE.POST, _c);},type:PUBSUB.CALLBACKS.USER});
+					}else{
+						pipe.channels[d.response[i].path]._fire_hook(PUBSUB.EVENTS.META_UPDATE, PUBSUB.STATE.POST, pipe.channels[d.response[i].path]);
 					}
 				}
+				pipe.runCallback(PUBSUB.CALLBACKS.SUBSCRIBE,d.response);
 				break;
 			case 'unsubscribe':
+				pipe.runCallback(PUBSUB.CALLBACKS.UNSUBSCRIBE,d.response);
 				break;
 			case 'users':
 				for(var i in d.response){
@@ -511,6 +573,7 @@ var pipe = {
 						pipe.me = d.response[i];
 					}
 				}
+				pipe.runCallback(PUBSUB.CALLBACKS.USER,d.response);
 		}
 	},
 	cmd:function(message, cmd){
@@ -538,51 +601,70 @@ var pipe = {
 	},
 	redirect:function(uri){
 		window.location = uri;
+	},
+	addCallback:function(cb,func){
+		if(isDebug){console.log('ADDING CALLBACK FOR '+cb);}
+		pipe.callbacks[cb].push(func);
+	},
+	runCallback:function(cb,val){
+		if(isDebug){console.log('RUNNING CALLBACKS FOR '+cb);}
+		for(var i in pipe.callbacks){
+			if(cb&i){
+				while(pipe.callbacks[i].length){
+					func = pipe.callbacks[i].shift();
+					func(val);
+				}
+			}
+		}
 	}
 }
 
 _pipe_mixins = {
 		'websocket':{
-			send:function(url, args, onSuccess, onError){
-				// TODO: on success and onerror
+			send:function(url, args, cb, onError){
+				// TODO: handle onError
 				if(pipe.session_id){args.session_id = pipe.session_id;}
 				if(pipe._socket == false){
-					var func = function(){pipe._socket.send(dojo.toJson(args))};
+					// TODO: also need to include onSuccess if passed in.
+					var func = {onLoad:function(){pipe._socket.send(dojo.toJson(args))},type:PUBSUB.CALLBACKS.ANY};
 					pipe.connect(func);
 				}else{
+					if(typeof cb == 'function'){
+						console.error('DEPRECATED: onSuccess (as function) in pipe.send is deprecated.  use {onLoad:function(),onError:function(),type:PUBSUB.CALLBACKS.ANY}');
+						cb = {onLoad:cb,type:PUBSUB.CALLBACKS.ANY}
+					}
+					if(cb && cb.onLoad){
+						pipe.addCallback(cb.type || PUBSUB.CALLBACKS.ANY, cb.onLoad)
+					}
 					if(pipe._socket.readyState == pipe._socket.OPEN){
 						pipe._socket.send(dojo.toJson(args));
 					}
 				}
 			},
-			connect:function(callback){
-				if(pipe._socket.callbacks == undefined){
-					pipe._socket.callbacks = [];
-				}
-				if(typeof callback == 'object'){
-					pipe._socket.callbacks.push(callback);
-				}
+			connect:function(cb){
 				if(pipe._socket == false || pipe._socket.readyState != pipe._socket.OPEN){
+					if(typeof cb == 'function'){
+						console.error('DEPRECATED: callback (as function) in pipe.send is deprecated.  use {onLoad:function(),onError:function(),type:PUBSUB.CALLBACKS.ANY}');
+						cb = {onLoad:cb,type:PUBSUB.CALLBACKS.ANY}
+					}
+					if(cb && cb.onLoad){
+						pipe.addCallback(cb.type || PUBSUB.CALLBACKS.ANY, cb.onLoad)
+					}
 					pipe._socket = new WebSocket('ws://'+window.location.host+pipe.urls.socket+'/'+pipe.session_id);
 					pipe._socket.onopen = pipe.onOpen;
 					pipe._socket.onmessage = pipe.onMessage;
 					pipe._socket.onclose = pipe.onClose;
 					pipe._socket.onerror = pipe.onTimeout;
 				}else{
-					if(pipe._socket.callbacks){
-						for(var i in pipe._socket.callbacks){
-							pipe._socket.callbacks[i]();
-						}
-						pipe._socket.callbacks = [];
+					/* TODO: not sure if i want this
+					if(cb.onLoad){
+						pipe.addCallback(cb.type || PUBSUB.CALLBACKS.ANY, cb.onLoad)
 					}
+					*/
 				}
 			},
 			onOpen:function(){
-				pipe.getChannelList();
-				for(var i in pipe._socket.callbacks){
-					pipe._socket.callbacks[i]();
-				}
-				pipe._socket.callbacks = {};
+				pipe.runCallback(PUBSUB.CALLBACKS.UNSUBSCRIBE);
 				for (var i in pipe._retryTimeout){
 					clearTimeout(pipe._retryTimeout[i])
 				}
@@ -598,6 +680,7 @@ _pipe_mixins = {
 				if( pipe.receive(_re) ){
 					pipe.onSuccess(_re);
 				}else{
+					//pipe._runCallbacks(_re);
 					pipe.errorMessage(_re);
 				}
 			},

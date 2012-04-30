@@ -94,7 +94,7 @@ class Base(object):
                         retVal.append(user.toDict(False))
                     else:
                         retVal.append(_u[0].toDict())
-                except KeyError:
+                except IndexError:
                     retVal.append(dict(error='invalid user'))      
             self.out(dict(type='users',response=retVal))
         except KeyError:
