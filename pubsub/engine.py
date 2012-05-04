@@ -83,6 +83,23 @@ class PubSub(object):
                 self.loadChannels()
                 self.channels[row['channel']].updateItem(row, collection_id, announce)
 
+    def loadChannelItem(self,collection_id,item_id):
+        try:
+            col = self._collections[long(collection_id)]
+        except KeyError:
+            #todo: handle this
+            debug("FAILED TO LOAD COLLECTION")
+            return None
+        items = col.db.getChannelItem(col.loc,col.id,item_id)
+        for row in items:
+            try:
+                return self.channels[row['channel']].updateItem(row, collection_id, True)
+            except KeyError:
+                self.loadChannels()
+                return self.channels[row['channel']].updateItem(row, collection_id, True)
+            
+
+
     """BETA"""
     def loadChannels(self):
         rows = self.db.getChannels()
@@ -267,9 +284,9 @@ class Channel():
                 PubSub.master_list[id].update(raw,announce)
             except KeyError:
                 PubSub.master_list[id] = ChannelItem(raw,announce)
-                
             self.addToHistory(PubSub.master_list[id])
             self.library[id] = PubSub.master_list[id]
+            return PubSub.master_list[id]
         except KeyError:
             pass
 
@@ -281,7 +298,7 @@ class ChannelItem():
         self.id = str(raw['collection_id'])+'_'+str(raw['id'])
         self.data = {}
         self.channels = []
-        self.update(raw.copy(),announce)
+        self.update(raw,announce)
         self.collection = PubSub.connect(raw['collection_id'])
         PubSub.master_list[self.id] = self
 
@@ -305,11 +322,11 @@ class ChannelItem():
             PubSub.users[user_id].runQueue()
 
     def getFromDB(self):
-        rows = self.collection.db.getChannelItem(self.collection.loc,self._id)
+        rows = self.collection.db.getChannelItem(self.collection.loc,self.collection.id,self._id)
         for row in rows:
             return row
-    def attr(self,key,val=False):
-        if val != False:
+    def attr(self,key,val=None):
+        if val != None:
             if not val:
                 val = ''
             if key == 'channel':
@@ -445,7 +462,7 @@ class User():
         if self.queue != [] and self.callback:
             messages = self.queue
             self.queue = []
-            self.send(sorted(messages, key=lambda id: id))
+            self.send(sorted(messages, key=lambda dt: dt))
     def loadChannel(self,channel):
         messages = self.getUpdate(channel)
         self.runQueue()

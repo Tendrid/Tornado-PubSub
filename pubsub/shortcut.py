@@ -43,7 +43,10 @@ class Base(object):
     
     def receiveChannelItem(self,data,user):
         user.times["lastPublished"] = int(time.mktime(datetime.datetime.now().timetuple()))
-        out = self.pubSubInstance.createChannelItem(data["channel_item"],data["channels"],data["cid"])
+        try:
+            self.pubSubInstance.master_list[data['ciid']].update(data['raw'])
+        except KeyError:
+            self.pubSubInstance.createChannelItem(data["channel_item"],data["channels"],data["cid"])
         self.out(dict(ok='channel_item ok'))
             
     def receiveChannel(self,data,user):

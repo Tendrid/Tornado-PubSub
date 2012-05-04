@@ -21,7 +21,7 @@ Object.size = function(obj) { var size = 0, key; for (key in obj) { if (obj.hasO
  *					 messages can also be combined to determin total state of app
  *						ie: (PUBSUB.ERR_MESSAGE.CONNECTION_FAILED|PUBSUB.ERR_MESSAGE.MISC_ERROR|PUBSUB.ERR_MESSAGE.REDPILL) ^ (PUBSUB.SYS_MESSAGE.MISC_ERROR_RECOVER|PUBSUB.SYS_MESSAGE.CONNECTION_RESTORED)
  *						above we submit that we have a misc error combined with a failed connection, and oh no! someone took the redpill.
- *						but then, we show that the misc error reoverd, and the connection was restore, our remainder is 4 (which is equal to PUBSUB.ERR_MESSAGE.REDPILL)
+ *						but then, we show that the misc error recovered, and the connection was restore, our remainder is 4 (which is equal to PUBSUB.ERR_MESSAGE.REDPILL)
  */
 
 var PUBSUB = {
@@ -74,6 +74,7 @@ var apps = {
 		if(this.onReady){
 			this.onReady();
 		}
+		this._active = true;
 	},
 	_mixin_sort:function(key, descending, callback){
 		// descending
@@ -85,7 +86,7 @@ var apps = {
 	},
 	activate:function(){
 		for(var app in this.ready){
-			if(this.ready[app].activate){				
+			if(this.ready[app].activate && !this.ready[app]._active){
 				this.ready[app].activate();
 			}
 		}
@@ -151,10 +152,10 @@ var apps = {
 			if(this.ready[app]){
 				// app already registered!
 			}else{
-
 				this.ready[app] = apps[app];
 				this.ready[app].channels = {};
 				this.ready[app]._subs = [];
+				this.ready[app]._active = false;
 				dojo.mixin(this.ready[app],{'sub':this._mixin_sub,'activate':this._mixin_activate,'sort':this._mixin_sort});
 				this.ready[app].library = new dojo.store.Memory();
 			}
@@ -174,15 +175,6 @@ var apps = {
 	}
 };
 
-/*** 
- *sub('root/*', callback, optional_Trackarray);
- */
-/*
-function _unSub(m){
-	console.log('UNSUB FIRED: ',m.channel.path);
-	//downgrade (channelWeight -=(1 / chan.length)) per channel item
-}
-*/
 
 /**
  *  HOOKS:
